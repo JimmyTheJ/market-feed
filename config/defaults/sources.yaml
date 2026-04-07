@@ -1,0 +1,125 @@
+# Market Pipeline - News Sources Configuration
+# Curated RSS feeds for low-stimulation, high-density market intelligence
+
+rss:
+  # --- Crypto ---
+  - name: coindesk
+    url: https://www.coindesk.com/arc/outboundfeeds/rss/
+    category: crypto
+    priority: 9
+    enabled: true
+
+  - name: cointelegraph
+    url: https://cointelegraph.com/rss
+    category: crypto
+    priority: 8
+    enabled: true
+
+  - name: bitcoin_magazine
+    url: https://bitcoinmagazine.com/.rss/full/
+    category: crypto
+    priority: 8
+    enabled: false  # currently returning 403
+
+  - name: decrypt
+    url: https://decrypt.co/feed
+    category: crypto
+    priority: 7
+    enabled: true
+
+  - name: the_block
+    url: https://www.theblock.co/rss.xml
+    category: crypto
+    priority: 8
+    enabled: true
+
+  # --- General Markets / Macro ---
+  - name: marketwatch_top
+    url: https://feeds.marketwatch.com/marketwatch/topstories/
+    category: macro
+    priority: 9
+    enabled: true
+
+  - name: marketwatch_pulse
+    url: https://feeds.marketwatch.com/marketwatch/marketpulse/
+    category: macro
+    priority: 8
+    enabled: true
+
+  - name: cnbc_top
+    url: https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114
+    category: macro
+    priority: 9
+    enabled: true
+
+  - name: cnbc_world
+    url: https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100727362
+    category: international
+    priority: 7
+    enabled: true
+
+  - name: yahoo_finance
+    url: https://finance.yahoo.com/news/rssindex
+    category: macro
+    priority: 7
+    enabled: true
+
+  # --- Energy ---
+  - name: oilprice
+    url: https://oilprice.com/rss/main
+    category: energy
+    priority: 8
+    enabled: true
+
+  - name: eia_today
+    url: https://www.eia.gov/rss/todayinenergy.xml
+    category: energy
+    priority: 8
+    enabled: true
+
+  # --- Precious Metals / Commodities ---
+  - name: kitco_news
+    url: https://www.kitco.com/feed/
+    category: commodities
+    priority: 9
+    enabled: false  # feed URL changed, needs update
+
+  # --- Bonds / Fixed Income ---
+  - name: marketwatch_bonds
+    url: https://feeds.marketwatch.com/marketwatch/bonds/
+    category: fixed_income
+    priority: 8
+    enabled: false  # feed redirects to 403, needs new URL
+
+  # --- Tesla / EV ---
+  - name: electrek
+    url: https://electrek.co/feed/
+    category: ev_tesla
+    priority: 8
+    enabled: true
+
+  - name: insideevs
+    url: https://insideevs.com/rss/news/
+    category: ev_tesla
+    priority: 7
+    enabled: false  # returning 404
+
+  # --- Technology ---
+  - name: techcrunch
+    url: https://techcrunch.com/feed/
+    category: technology
+    priority: 7
+    enabled: true
+
+  # --- International ---
+  - name: bbc_business
+    url: https://feeds.bbci.co.uk/news/business/rss.xml
+    category: international
+    priority: 7
+    enabled: true
+
+# Transcript sources (future)
+transcripts:
+  - name: selected_youtube_transcripts
+    enabled: false
+    channels: []

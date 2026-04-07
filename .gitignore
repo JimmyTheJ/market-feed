@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.*
+!.env.example
+output/
+data/cache/
+logs/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+.mypy_cache/
+# User config overrides (defaults/ is always tracked)
+config/*.yaml
+!config/defaults/
+data/metadata/*.yaml
+!data/defaults/

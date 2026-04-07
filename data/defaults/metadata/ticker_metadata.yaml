@@ -1,0 +1,184 @@
+# Local Metadata Registry
+# Curated metadata for portfolio positions.
+# This is the most deterministic and auditable source of enrichment data.
+# Add/edit entries here for any ticker you hold or watch.
+
+IBIT:
+  instrument_type: etf
+  asset_class: crypto
+  sector: digital_assets
+  subsector: bitcoin_spot
+  underlying: bitcoin
+  themes: [bitcoin, crypto_flows, macro_liquidity, risk_on, institutional_adoption]
+  keywords: [bitcoin, btc, spot bitcoin etf, etf inflows, blackrock, ibit, crypto regulation, digital gold]
+  macro_sensitivities: [real_yields, usd_liquidity, risk_appetite, dollar_strength]
+  related_terms: [halving, miners, custody, on-chain, hash rate, mempool, lightning network]
+  risk_factors: [regulatory_crackdown, exchange_failure, liquidity_crisis, correlation_spike]
+  region: us
+  currency: usd
+  notes: "iShares Bitcoin Trust ETF - tracks spot bitcoin price"
+
+ETHA:
+  instrument_type: etf
+  asset_class: crypto
+  sector: digital_assets
+  subsector: ethereum_spot
+  underlying: ethereum
+  themes: [ethereum, defi, smart_contracts, crypto_flows, staking, layer2]
+  keywords: [ethereum, eth, spot ethereum etf, defi, staking, layer 2, rollups, blackrock, etha]
+  macro_sensitivities: [risk_appetite, tech_sentiment, usd_liquidity, regulatory_climate]
+  related_terms: [gas fees, merge, proof of stake, dapps, nft, erc20, solidity]
+  risk_factors: [regulatory_crackdown, smart_contract_risk, competition_from_l1s, scaling_issues]
+  region: us
+  currency: usd
+  notes: "iShares Ethereum Trust ETF - tracks spot ethereum price"
+
+TSLA:
+  instrument_type: equity
+  asset_class: equities
+  sector: consumer_discretionary
+  subsector: electric_vehicles
+  underlying: tesla
+  themes: [ev, autonomous_driving, energy_storage, ai, robotics, manufacturing]
+  keywords: [tesla, tsla, elon musk, cybertruck, model y, model 3, fsd, autopilot, megapack, dojo, optimus]
+  macro_sensitivities: [consumer_spending, interest_rates, ev_subsidies, china_demand, lithium_prices]
+  related_terms: [gigafactory, supercharger, battery, ev credits, robotaxi, energy generation]
+  risk_factors: [valuation_compression, competition, regulatory_risk, key_person_risk, china_exposure]
+  region: us
+  currency: usd
+  notes: "Tesla Inc - EV manufacturer, energy, AI/robotics"
+
+XLE:
+  instrument_type: etf
+  asset_class: equities
+  sector: energy
+  subsector: oil_gas_integrated
+  underlying: energy_select_sector
+  themes: [oil, natural_gas, energy_transition, dividends, capex_discipline]
+  keywords: [energy, oil, crude, natural gas, xle, exxon, chevron, drilling, opec, refining]
+  macro_sensitivities: [oil_prices, geopolitics, global_growth, dollar_strength, sanctions]
+  related_terms: [upstream, downstream, midstream, shale, permian, lng, spr, rig count]
+  risk_factors: [oil_price_collapse, recession, energy_transition_acceleration, regulatory_tightening]
+  region: us
+  currency: usd
+  notes: "Energy Select Sector SPDR Fund - tracks S&P 500 energy companies"
+
+GLD:
+  instrument_type: etf
+  asset_class: commodities
+  sector: precious_metals
+  subsector: gold
+  underlying: gold
+  themes: [gold, safe_haven, inflation_hedge, central_bank_buying, dedollarization]
+  keywords: [gold, gld, bullion, gold price, gold etf, spdr gold, precious metals, safe haven]
+  macro_sensitivities: [real_yields, inflation_expectations, dollar_strength, geopolitical_risk, central_bank_policy]
+  related_terms: [vault, troy ounce, comex, lbma, gold miners, jewelry demand, central bank reserves]
+  risk_factors: [rising_real_yields, dollar_strength, risk_on_rotation, etf_outflows]
+  region: us
+  currency: usd
+  notes: "SPDR Gold Shares - tracks gold bullion price"
+
+SLV:
+  instrument_type: etf
+  asset_class: commodities
+  sector: precious_metals
+  subsector: silver
+  underlying: silver
+  themes: [silver, industrial_metals, green_energy, solar, safe_haven]
+  keywords: [silver, slv, silver price, silver etf, ishares silver, precious metals, solar panels]
+  macro_sensitivities: [industrial_demand, inflation_expectations, dollar_strength, green_energy_policy]
+  related_terms: [photovoltaic, electronics, silver miners, gold-silver ratio, comex silver]
+  risk_factors: [industrial_slowdown, rising_real_yields, substitution_risk, dollar_strength]
+  region: us
+  currency: usd
+  notes: "iShares Silver Trust - tracks silver bullion price"
+
+SPY:
+  instrument_type: etf
+  asset_class: equities
+  sector: broad_market
+  subsector: large_cap_blend
+  underlying: sp500
+  themes: [us_equities, large_cap, earnings, economic_growth, fed_policy]
+  keywords: [s&p 500, spy, sp500, large cap, us stocks, index, spy etf, wall street]
+  macro_sensitivities: [earnings_growth, interest_rates, inflation, employment, consumer_confidence]
+  related_terms: [magnificent 7, market breadth, pe ratio, buybacks, index rebalance]
+  risk_factors: [recession, valuation_risk, concentration_risk, policy_error, geopolitical_shock]
+  region: us
+  currency: usd
+  notes: "SPDR S&P 500 ETF Trust - tracks the S&P 500 index"
+
+QQQ:
+  instrument_type: etf
+  asset_class: equities
+  sector: technology
+  subsector: mega_cap_tech
+  underlying: nasdaq_100
+  themes: [mega_cap_tech, rates, ai, growth, semiconductors, cloud]
+  keywords: [nasdaq, qqq, nasdaq 100, tech stocks, apple, microsoft, nvidia, meta, google, amazon, ai capex]
+  macro_sensitivities: [duration, policy_rates, earnings_growth, tech_regulation, ai_investment]
+  related_terms: [magnificent 7, valuation, guidance, pe multiple, tech earnings, semiconductor cycle]
+  risk_factors: [rate_sensitivity, valuation_compression, antitrust, capex_disappointment, rotation_to_value]
+  region: us
+  currency: usd
+  notes: "Invesco QQQ Trust - tracks the Nasdaq 100 index"
+
+TLT:
+  instrument_type: etf
+  asset_class: fixed_income
+  sector: treasury
+  subsector: long_duration
+  underlying: long_term_treasury
+  themes: [bonds, yields, duration, fed_policy, recession_hedge, flight_to_safety]
+  keywords: [treasury, tlt, bonds, yields, 20 year, long bond, interest rates, fed, fomc, rate cut]
+  macro_sensitivities: [inflation, fed_funds_rate, term_premium, fiscal_deficit, global_yields]
+  related_terms: [yield curve, duration risk, coupon, auction, bid-to-cover, real yield, tips]
+  risk_factors: [inflation_persistence, fiscal_blowout, term_premium_spike, foreign_selling]
+  region: us
+  currency: usd
+  notes: "iShares 20+ Year Treasury Bond ETF - long-duration US government bonds"
+
+DBC:
+  instrument_type: etf
+  asset_class: commodities
+  sector: broad_commodities
+  subsector: diversified
+  underlying: commodity_index
+  themes: [commodities, inflation, global_growth, supply_chains, energy]
+  keywords: [commodities, dbc, commodity index, oil, copper, wheat, corn, soybeans, natural gas]
+  macro_sensitivities: [global_growth, dollar_strength, supply_disruptions, china_demand, weather]
+  related_terms: [contango, backwardation, futures curve, crop report, inventory data, opec]
+  risk_factors: [global_recession, demand_destruction, dollar_surge, commodity_supercycle_reversal]
+  region: global
+  currency: usd
+  notes: "Invesco DB Commodity Index Tracking Fund - broad commodity basket"
+
+UNG:
+  instrument_type: etf
+  asset_class: commodities
+  sector: energy_commodities
+  subsector: natural_gas
+  underlying: natural_gas
+  themes: [natural_gas, energy, weather, storage, lng, heating, power_generation]
+  keywords: [natural gas, ung, henry hub, gas price, gas storage, lng, weather, cold snap, heat wave]
+  macro_sensitivities: [weather_patterns, storage_levels, lng_exports, production_levels, heating_demand]
+  related_terms: [eia storage report, freeport lng, pipeline, associated gas, flaring, drilling rigs]
+  risk_factors: [weather_normalization, overproduction, storage_glut, renewable_displacement]
+  region: us
+  currency: usd
+  notes: "United States Natural Gas Fund - tracks near-month natural gas futures"
+
+EFA:
+  instrument_type: etf
+  asset_class: equities
+  sector: international
+  subsector: developed_markets_ex_us
+  underlying: msci_eafe
+  themes: [international, europe, japan, developed_markets, currency, valuation]
+  keywords: [international stocks, efa, eafe, europe, japan, uk, developed markets, foreign equities]
+  macro_sensitivities: [global_growth, currency_moves, ecb_policy, boj_policy, trade_policy, geopolitics]
+  related_terms: [euro, yen, pound, dax, nikkei, ftse, stoxx, eurozone, abenomics]
+  risk_factors: [currency_headwinds, geopolitical_risk, structural_stagnation, trade_wars]
+  region: international
+  currency: usd
+  notes: "iShares MSCI EAFE ETF - developed market equities ex-US and Canada"

@@ -1,0 +1,50 @@
+version: "3.8"
+
+services:
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: market-pipeline
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      # Persist output on host
+      - ./output:/app/output
+      # Persist config on host (user overrides + defaults)
+      - ./config:/app/config
+      # Persist data on host (metadata registry)
+      - ./data:/app/data
+      # Logs
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    environment:
+      - OUTPUT_BASE_PATH=output
+      # Ollama: connects to host via extra_hosts mapping
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2}
+      - USE_OLLAMA=${USE_OLLAMA:-true}
+      - PIPELINE_RUN_HOUR=${PIPELINE_RUN_HOUR:-6}
+      - PIPELINE_RUN_MINUTE=${PIPELINE_RUN_MINUTE:-30}
+      - PIPELINE_TIMEZONE=${PIPELINE_TIMEZONE:-America/New_York}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # Auth
+      - AUTH_ENABLED=${AUTH_ENABLED:-false}
+      - JWT_SECRET=${JWT_SECRET:-change-this-to-a-random-secret}
+      - COOKIE_SECURE=${COOKIE_SECURE:-false}
+    extra_hosts:
+      # Allows the container to reach the host machine (Ollama, etc.)
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/auth/status')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  default:
+    name: ${DOCKER_NETWORK:-proxy}
+    external: true

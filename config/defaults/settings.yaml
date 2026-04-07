@@ -1,0 +1,48 @@
+# Market Pipeline - Runtime Settings
+
+# Output configuration
+output_base_path: output
+max_articles_per_position: 5
+max_total_articles: 200
+
+# Summarization
+summarization:
+  use_ollama: true
+  ollama_base_url: http://localhost:11434
+  ollama_model: llama3.2
+  temperature: 0.3
+  max_tokens: 500
+  # Fallback to extractive summaries if Ollama is unavailable
+  fallback_to_extractive: true
+
+# Scoring weights (tune these to adjust relevance sensitivity)
+scoring:
+  direct_ticker_bonus: 10.0
+  keyword_match_points: 3.0
+  theme_match_points: 4.0
+  macro_overlap_points: 2.5
+  related_term_points: 1.5
+  source_priority_factor: 0.1
+  recency_max_bonus: 2.0
+  recency_decay_hours: 48
+
+# Cache settings
+cache:
+  enabled: true
+  ttl_hours: 12
+  directory: data/cache
+
+# Scheduling (used by the API server's built-in scheduler)
+schedule:
+  run_hour: 6
+  run_minute: 30
+  timezone: America/New_York
+
+# Logging
+logging:
+  level: INFO
+
+# Alert thresholds (future use)
+alerts:
+  high_relevance_threshold: 25.0
+  position_concentration_warning: 0.40

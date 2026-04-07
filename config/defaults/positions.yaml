@@ -1,0 +1,36 @@
+positions:
+  - ticker: IBIT
+    weight: 0.15
+
+  - ticker: ETHA
+    weight: 0.05
+
+  - ticker: TSLA
+    weight: 0.10
+
+  - ticker: XLE
+    weight: 0.08
+
+  - ticker: GLD
+    weight: 0.10
+
+  - ticker: SLV
+    weight: 0.05
+
+  - ticker: SPY
+    weight: 0.12
+
+  - ticker: QQQ
+    weight: 0.12
+
+  - ticker: TLT
+    weight: 0.08
+
+  - ticker: DBC
+    weight: 0.05
+
+  - ticker: UNG
+    weight: 0.05
+
+  - ticker: EFA
+    weight: 0.05

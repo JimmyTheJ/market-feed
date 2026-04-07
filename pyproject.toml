@@ -1,0 +1,15 @@
+[project]
+name = "market-pipeline"
+version = "0.1.0"
+description = "Position-driven market intelligence pipeline"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.ruff]
+line-length = 100
