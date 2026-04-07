@@ -391,6 +391,56 @@
         }
         .logout-btn:hover { border-color: var(--red); color: var(--red); }
 
+        /* ── Mode Toggle ─────────────────────────────────────────── */
+        .mode-toggle {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 10px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            font-size: 12px;
+            cursor: pointer;
+            color: var(--text-muted);
+            user-select: none;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+        .mode-toggle:hover { border-color: var(--accent); color: var(--text); }
+        .mode-toggle.active {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(88, 166, 255, 0.1);
+        }
+
+        /* ── Inline Edit ─────────────────────────────────────────── */
+        .edit-weight-wrap {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+        }
+        .edit-weight-input {
+            width: 68px;
+            padding: 2px 6px;
+            border: 1px solid var(--accent);
+            border-radius: 4px;
+            background: var(--bg);
+            color: var(--text);
+            font-size: 13px;
+            font-family: 'SF Mono', Monaco, monospace;
+            text-align: right;
+        }
+        .edit-weight-input:focus { outline: none; }
+        .pct-label {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+        .btn-edit { color: var(--text-muted); }
+        .btn-edit:hover { border-color: var(--accent); color: var(--accent); }
+        .btn-confirm { color: var(--green); }
+        .btn-confirm:hover { border-color: var(--green); }
+
         @media (max-width: 480px) {
             .position-info { gap: 8px; }
             .ticker { font-size: 14px; min-width: 40px; }
@@ -433,7 +483,13 @@
         <!-- Positions Tab -->
         <div class="tab-content active" id="tab-positions">
             <div class="card">
-                <h2>Portfolio Positions</h2>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                    <h2 style="margin-bottom:0">Portfolio Positions</h2>
+                    <div class="mode-toggle" id="mode-toggle" onclick="toggleMode()"
+                         title="Rebalance mode: adding/editing/removing a position rescales the rest to keep the total at 100%">
+                        ⚖ Rebalance
+                    </div>
+                </div>
                 <div class="weight-bar" id="weight-bar"></div>
                 <ul class="positions-list" id="positions-list">
                     <li class="loading"><span class="spinner"></span> Loading...</li>
@@ -446,8 +502,11 @@
                 <div class="add-form" id="add-form">
                     <input type="text" id="new-ticker" placeholder="TICKER" maxlength="10"
                            style="flex: 1; text-transform: uppercase;">
-                    <input type="number" id="new-weight" placeholder="Weight (e.g. 0.10)"
-                           step="0.01" min="0" max="1" style="flex: 1;">
+                    <div style="display:flex;align-items:center;gap:4px;flex:1;min-width:100px">
+                        <input type="number" id="new-weight" placeholder="9.5"
+                               step="0.01" min="0.01" max="100" style="flex:1">
+                        <span class="pct-label">%</span>
+                    </div>
                     <button class="btn btn-primary" onclick="addPosition()">Add</button>
                 </div>
             </div>
@@ -641,12 +700,66 @@
             setTimeout(() => t.className = 'toast', 2500);
         }
 
+        // ── Mode Toggle ─────────────────────────────────────────────────
+
+        let rebalanceMode = false;
+        let currentPositions = []; // cached [{ticker, weight}] in decimal
+
+        function toggleMode() {
+            rebalanceMode = !rebalanceMode;
+            const el = document.getElementById('mode-toggle');
+            el.classList.toggle('active', rebalanceMode);
+            el.innerHTML = rebalanceMode ? '⚖ Rebalance ✓' : '⚖ Rebalance';
+        }
+
+        // ── Rebalance Helpers ────────────────────────────────────────────
+
+        function rebalanceForAdd(positions, newTicker, newWeight) {
+            // Scale all existing positions down to make room for newWeight
+            const scale = 1 - newWeight;
+            const scaled = positions.map(p => ({ ticker: p.ticker, weight: p.weight * scale }));
+            scaled.push({ ticker: newTicker, weight: newWeight });
+            return scaled;
+        }
+
+        function rebalanceForEdit(positions, ticker, newWeight) {
+            const old = positions.find(p => p.ticker === ticker);
+            if (!old) return positions;
+            const delta = newWeight - old.weight;
+            const others = positions.filter(p => p.ticker !== ticker);
+            const otherSum = others.reduce((s, p) => s + p.weight, 0);
+            if (otherSum === 0) return [{ ticker, weight: newWeight }];
+            return positions.map(p => {
+                if (p.ticker === ticker) return { ticker: p.ticker, weight: newWeight };
+                return { ticker: p.ticker, weight: Math.max(0, p.weight - delta * (p.weight / otherSum)) };
+            });
+        }
+
+        function rebalanceForDelete(positions, ticker) {
+            const removed = positions.find(p => p.ticker === ticker);
+            const others = positions.filter(p => p.ticker !== ticker);
+            if (!removed || others.length === 0) return others;
+            const otherSum = others.reduce((s, p) => s + p.weight, 0);
+            if (otherSum === 0) return others;
+            return others.map(p => ({
+                ticker: p.ticker,
+                weight: p.weight + removed.weight * (p.weight / otherSum)
+            }));
+        }
+
+        function roundWeight(w) {
+            return Math.round(w * 100000) / 100000;
+        }
+
         // ── Positions ───────────────────────────────────────────────────
 
         async function loadPositions() {
             try {
                 const res = await apiFetch(API + '/api/positions');
                 const data = await res.json();
+                currentPositions = (data.positions || []).map(p => ({
+                    ticker: p.ticker, weight: p.weight
+                }));
                 renderPositions(data);
             } catch (e) {
                 document.getElementById('positions-list').innerHTML =
@@ -666,65 +779,123 @@
                 return;
             }
 
-            // Weight bar
             bar.innerHTML = data.positions.map((p, i) =>
-                `<div class="weight-segment" style="width:${p.weight * 100}%;background:${COLORS[i % COLORS.length]}" title="${p.ticker}: ${(p.weight * 100).toFixed(1)}%"></div>`
+                `<div class="weight-segment" style="width:${p.weight * 100}%;background:${COLORS[i % COLORS.length]}" title="${p.ticker}: ${(p.weight * 100).toFixed(2)}%"></div>`
             ).join('');
 
-            // Position list
             list.innerHTML = data.positions.map((p, i) => `
-                <li class="position-item">
+                <li class="position-item" id="row-${p.ticker}">
                     <div class="position-info">
                         <span style="width:8px;height:8px;border-radius:50%;background:${COLORS[i % COLORS.length]};flex-shrink:0"></span>
                         <span class="ticker">${p.ticker}</span>
-                        <span class="weight-badge">${(p.weight * 100).toFixed(1)}%</span>
+                        <span class="weight-badge" id="badge-${p.ticker}">${(p.weight * 100).toFixed(2)}%</span>
                     </div>
-                    <div class="position-actions">
+                    <div class="position-actions" id="actions-${p.ticker}">
+                        <button class="btn btn-small btn-edit btn-icon" onclick="startEdit('${p.ticker}')" title="Edit weight">✎</button>
                         <button class="btn btn-small btn-danger btn-icon" onclick="deletePosition('${p.ticker}')" title="Remove">✕</button>
                     </div>
                 </li>
             `).join('');
 
-            // Weight sum
             const ws = data.weight_sum;
             const ok = Math.abs(ws - 1.0) <= 0.01;
             sum.className = 'weight-sum ' + (ok ? 'ok' : 'warning');
-            sum.textContent = `Σ ${(ws * 100).toFixed(1)}%` + (data.warning ? ` ⚠ ${data.warning}` : ' ✓');
+            sum.textContent = `Σ ${(ws * 100).toFixed(2)}%` + (data.warning ? ` ⚠ ${data.warning}` : ' ✓');
+        }
+
+        function startEdit(ticker) {
+            const pos = currentPositions.find(p => p.ticker === ticker);
+            if (!pos) return;
+            const pct = (pos.weight * 100).toFixed(2);
+
+            const badge = document.getElementById('badge-' + ticker);
+            badge.outerHTML = `
+                <div class="edit-weight-wrap" id="edit-wrap-${ticker}">
+                    <input class="edit-weight-input" id="edit-input-${ticker}"
+                           type="number" value="${pct}" step="0.01" min="0.01" max="100">
+                    <span class="pct-label">%</span>
+                </div>`;
+
+            document.getElementById('actions-' + ticker).innerHTML = `
+                <button class="btn btn-small btn-confirm btn-icon" onclick="saveEdit('${ticker}')" title="Save">✓</button>
+                <button class="btn btn-small btn-danger btn-icon" onclick="cancelEdit()" title="Cancel">✕</button>`;
+
+            const input = document.getElementById('edit-input-' + ticker);
+            if (input) {
+                input.focus();
+                input.select();
+                input.addEventListener('keydown', e => {
+                    if (e.key === 'Enter') saveEdit(ticker);
+                    if (e.key === 'Escape') cancelEdit();
+                });
+            }
+        }
+
+        function cancelEdit() {
+            renderPositions({
+                positions: currentPositions,
+                weight_sum: currentPositions.reduce((s, p) => s + p.weight, 0),
+                warning: null
+            });
+        }
+
+        async function saveEdit(ticker) {
+            const input = document.getElementById('edit-input-' + ticker);
+            if (!input) return;
+            const pct = parseFloat(input.value);
+            if (isNaN(pct) || pct <= 0 || pct > 100) {
+                showToast('Enter a valid percentage (0.01–100)', 'error');
+                return;
+            }
+            const newWeight = roundWeight(pct / 100);
+            const newPositions = rebalanceMode
+                ? rebalanceForEdit(currentPositions, ticker, newWeight)
+                : currentPositions.map(p => p.ticker === ticker ? { ticker: p.ticker, weight: newWeight } : p);
+            await saveAllPositions(newPositions, `Updated ${ticker}`);
         }
 
         async function addPosition() {
-            const ticker = document.getElementById('new-ticker').value.trim();
-            const weight = parseFloat(document.getElementById('new-weight').value);
+            const ticker = document.getElementById('new-ticker').value.trim().toUpperCase();
+            const pct = parseFloat(document.getElementById('new-weight').value);
 
             if (!ticker) { showToast('Enter a ticker', 'error'); return; }
-            if (isNaN(weight) || weight <= 0) { showToast('Enter a valid weight', 'error'); return; }
-
-            try {
-                const res = await apiFetch(API + '/api/positions', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ticker, weight })
-                });
-                if (!res.ok) {
-                    const err = await res.json();
-                    showToast(err.detail || 'Failed', 'error');
-                    return;
-                }
-                document.getElementById('new-ticker').value = '';
-                document.getElementById('new-weight').value = '';
-                showToast(`Added ${ticker.toUpperCase()}`);
-                loadPositions();
-            } catch (e) {
-                showToast('Network error', 'error');
+            if (isNaN(pct) || pct <= 0 || pct > 100) { showToast('Enter a percentage between 0.01 and 100', 'error'); return; }
+            if (currentPositions.find(p => p.ticker === ticker)) {
+                showToast(`${ticker} already exists`, 'error'); return;
             }
+
+            const newWeight = roundWeight(pct / 100);
+            const newPositions = (rebalanceMode && currentPositions.length > 0)
+                ? rebalanceForAdd(currentPositions, ticker, newWeight)
+                : [...currentPositions, { ticker, weight: newWeight }];
+
+            await saveAllPositions(newPositions, `Added ${ticker}`);
+            document.getElementById('new-ticker').value = '';
+            document.getElementById('new-weight').value = '';
         }
 
         async function deletePosition(ticker) {
             if (!confirm(`Remove ${ticker}?`)) return;
+            const newPositions = (rebalanceMode && currentPositions.length > 1)
+                ? rebalanceForDelete(currentPositions, ticker)
+                : currentPositions.filter(p => p.ticker !== ticker);
+            await saveAllPositions(newPositions, `Removed ${ticker}`);
+        }
+
+        async function saveAllPositions(positions, successMsg) {
             try {
-                const res = await apiFetch(API + '/api/positions/' + ticker, { method: 'DELETE' });
-                if (!res.ok) { showToast('Failed to delete', 'error'); return; }
-                showToast(`Removed ${ticker}`);
+                const payload = positions.map(p => ({ ticker: p.ticker, weight: roundWeight(p.weight) }));
+                const res = await apiFetch(API + '/api/positions', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ positions: payload })
+                });
+                if (!res.ok) {
+                    const err = await res.json();
+                    showToast(err.detail || 'Failed to save', 'error');
+                    return;
+                }
+                showToast(successMsg);
                 loadPositions();
             } catch (e) {
                 showToast('Network error', 'error');
