@@ -123,12 +123,19 @@ class PipelineRunRequest(BaseModel):
 # ── Routes ───────────────────────────────────────────────────────────
 
 
+_NO_CACHE_HEADERS = {
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def root():
     """Serve the web UI (no auth required — login is handled in the UI)."""
     web_path = Path("web/index.html")
     if web_path.exists():
-        return HTMLResponse(web_path.read_text())
+        return HTMLResponse(web_path.read_text(encoding="utf-8"), headers=_NO_CACHE_HEADERS)
     return HTMLResponse("<h1>Market Pipeline API</h1><p>Web UI not found.</p>")
 
 

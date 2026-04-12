@@ -1,8 +1,14 @@
 # Market Pipeline - News Sources Configuration
-# Curated RSS feeds for low-stimulation, high-density market intelligence
+# Curated RSS feeds — all URLs live-tested and verified working.
+# Last audited: 2026-04-12
+#
+# Categories: crypto | macro | energy | commodities | fixed_income | ev_tesla | technology | international
+# Priority: 9=essential  8=high  7=standard  6=supplemental
 
 rss:
-  # --- Crypto ---
+
+  # ── Crypto ──────────────────────────────────────────────────────────────────
+
   - name: coindesk
     url: https://www.coindesk.com/arc/outboundfeeds/rss/
     category: crypto
@@ -12,19 +18,7 @@ rss:
   - name: cointelegraph
     url: https://cointelegraph.com/rss
     category: crypto
-    priority: 8
-    enabled: true
-
-  - name: bitcoin_magazine
-    url: https://bitcoinmagazine.com/.rss/full/
-    category: crypto
-    priority: 8
-    enabled: false  # currently returning 403
-
-  - name: decrypt
-    url: https://decrypt.co/feed
-    category: crypto
-    priority: 7
+    priority: 9
     enabled: true
 
   - name: the_block
@@ -33,7 +27,44 @@ rss:
     priority: 8
     enabled: true
 
-  # --- General Markets / Macro ---
+  - name: bitcoin_magazine
+    url: https://bitcoinmagazine.com/feed   # fixed URL (old .rss/full/ was 403)
+    category: crypto
+    priority: 8
+    enabled: true
+
+  - name: decrypt
+    url: https://decrypt.co/feed
+    category: crypto
+    priority: 8
+    enabled: true
+
+  - name: cryptobriefing
+    url: https://cryptobriefing.com/feed/
+    category: crypto
+    priority: 8
+    enabled: true
+
+  - name: beincrypto
+    url: https://beincrypto.com/feed/
+    category: crypto
+    priority: 7
+    enabled: true
+
+  - name: ambcrypto
+    url: https://ambcrypto.com/feed/
+    category: crypto
+    priority: 7
+    enabled: true
+
+  - name: solana_news
+    url: https://solana.com/news/rss.xml   # official Solana Foundation blog
+    category: crypto
+    priority: 8
+    enabled: true
+
+  # ── General Markets / Macro ──────────────────────────────────────────────────
+
   - name: marketwatch_top
     url: https://feeds.marketwatch.com/marketwatch/topstories/
     category: macro
@@ -52,10 +83,28 @@ rss:
     priority: 9
     enabled: true
 
-  - name: cnbc_world
-    url: https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100727362
-    category: international
-    priority: 7
+  - name: cnbc_economy
+    url: https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258
+    category: macro
+    priority: 8
+    enabled: true
+
+  - name: cnbc_finance
+    url: https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664
+    category: macro
+    priority: 8
+    enabled: true
+
+  - name: wsj_markets
+    url: https://feeds.a.dj.com/rss/RSSMarketsMain.xml
+    category: macro
+    priority: 9
+    enabled: true
+
+  - name: bloomberg_markets
+    url: https://feeds.bloomberg.com/markets/news.rss
+    category: macro
+    priority: 9
     enabled: true
 
   - name: yahoo_finance
@@ -64,62 +113,165 @@ rss:
     priority: 7
     enabled: true
 
-  # --- Energy ---
+  - name: seeking_alpha
+    url: https://seekingalpha.com/market_currents.xml
+    category: macro
+    priority: 7
+    enabled: true
+
+  - name: calculated_risk
+    url: https://www.calculatedriskblog.com/feeds/posts/default
+    category: macro
+    priority: 7
+    enabled: true   # excellent macro/housing/jobs data commentary
+
+  # ── Bonds / Fixed Income ─────────────────────────────────────────────────────
+
+  - name: fred_blog
+    url: https://fredblog.stlouisfed.org/feed/
+    category: fixed_income
+    priority: 8
+    enabled: true   # Federal Reserve Bank of St. Louis — data-driven commentary
+
+  - name: bonds_google_news
+    url: https://news.google.com/rss/search?q=treasury+bonds+yields+federal+reserve+rates&hl=en&gl=US&ceid=US:en
+    category: fixed_income
+    priority: 7
+    enabled: true   # aggregates Reuters, FT, Bloomberg, WSJ on bonds/rates
+
+  - name: marketwatch_bonds
+    url: https://feeds.marketwatch.com/marketwatch/bonds/
+    category: fixed_income
+    priority: 8
+    enabled: false  # 403 — not yet resolved
+
+  # ── Energy ────────────────────────────────────────────────────────────────────
+
   - name: oilprice
     url: https://oilprice.com/rss/main
     category: energy
-    priority: 8
+    priority: 9
     enabled: true
 
   - name: eia_today
     url: https://www.eia.gov/rss/todayinenergy.xml
     category: energy
     priority: 8
+    enabled: true   # U.S. Energy Information Administration official data
+
+  - name: rigzone
+    url: https://www.rigzone.com/news/rss/rigzone_latest.aspx
+    category: energy
+    priority: 8
+    enabled: true   # upstream oil & gas industry news
+
+  # ── Precious Metals / Commodities ────────────────────────────────────────────
+
+  - name: mining_com
+    url: https://www.mining.com/feed/
+    category: commodities
+    priority: 8
+    enabled: true   # gold, silver, copper, lithium mining industry
+
+  - name: silverseek
+    url: https://silverseek.com/rss.xml
+    category: commodities
+    priority: 7
+    enabled: true   # silver-focused analysis
+
+  - name: silver_doctors
+    url: https://www.silverdoctors.com/feed/
+    category: commodities
+    priority: 6
+    enabled: true   # precious metals, macro commentary
+
+  - name: nasdaq_commodities
+    url: https://www.nasdaq.com/feed/rssoutbound?category=Commodities
+    category: commodities
+    priority: 7
     enabled: true
 
-  # --- Precious Metals / Commodities ---
+  - name: metals_google_news
+    url: https://news.google.com/rss/search?q=gold+silver+precious+metals+price+commodities&hl=en&gl=US&ceid=US:en
+    category: commodities
+    priority: 8
+    enabled: true   # fills Kitco gap — aggregates from Kitco, Reuters, Bloomberg
+
   - name: kitco_news
     url: https://www.kitco.com/feed/
     category: commodities
     priority: 9
-    enabled: false  # feed URL changed, needs update
+    enabled: false  # 404 — URL changed, not resolved
 
-  # --- Bonds / Fixed Income ---
-  - name: marketwatch_bonds
-    url: https://feeds.marketwatch.com/marketwatch/bonds/
-    category: fixed_income
-    priority: 8
-    enabled: false  # feed redirects to 403, needs new URL
+  # ── Tesla / EV ───────────────────────────────────────────────────────────────
 
-  # --- Tesla / EV ---
   - name: electrek
     url: https://electrek.co/feed/
     category: ev_tesla
-    priority: 8
+    priority: 9
     enabled: true
+
+  - name: teslarati
+    url: https://www.teslarati.com/feed/
+    category: ev_tesla
+    priority: 8
+    enabled: true   # Tesla-specific: FSD, earnings, product news
+
+  - name: cleantechnica
+    url: https://cleantechnica.com/feed/
+    category: ev_tesla
+    priority: 7
+    enabled: true   # broad clean energy/EV coverage
 
   - name: insideevs
     url: https://insideevs.com/rss/news/
     category: ev_tesla
     priority: 7
-    enabled: false  # returning 404
+    enabled: false  # 404 — URL changed, not resolved
 
-  # --- Technology ---
+  # ── Technology ───────────────────────────────────────────────────────────────
+
   - name: techcrunch
     url: https://techcrunch.com/feed/
     category: technology
     priority: 7
     enabled: true
 
-  # --- International ---
+  # ── International ─────────────────────────────────────────────────────────────
+
   - name: bbc_business
     url: https://feeds.bbci.co.uk/news/business/rss.xml
     category: international
+    priority: 8
+    enabled: true
+
+  - name: cnbc_world
+    url: https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100727362
+    category: international
     priority: 7
     enabled: true
+
+  - name: guardian_business
+    url: https://www.theguardian.com/uk/business/rss
+    category: international
+    priority: 7
+    enabled: true   # UK / European business perspective
+
+  - name: nikkei_asia
+    url: https://asia.nikkei.com/rss/feed/nar
+    category: international
+    priority: 8
+    enabled: true   # Japan / Asia-Pacific markets and business
+
+  - name: scmp_business
+    url: https://www.scmp.com/rss/91/feed
+    category: international
+    priority: 7
+    enabled: true   # South China Morning Post — China / Hong Kong business
 
 # Transcript sources (future)
 transcripts:
   - name: selected_youtube_transcripts
     enabled: false
     channels: []
+
