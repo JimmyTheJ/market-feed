@@ -39,6 +39,12 @@ from ..main import run_pipeline, setup_logging
 from ..models import DEFAULT_CURRENCIES, Position, PositionsFile
 from ..positions_loader import load_positions, save_positions
 from ..price_service import get_prices
+from ..profile_manager import (
+    create_profile,
+    delete_profile,
+    get_profile,
+    list_profiles,
+)
 
 load_dotenv()
 setup_logging(os.getenv("LOG_LEVEL", "INFO"))
@@ -106,6 +112,16 @@ if not POSITIONS_PATH:
         POSITIONS_PATH = "config/positions.yaml"
 
 
+def _resolve_positions_path(profile: str | None = None) -> str:
+    """Resolve positions path, preferring profile-scoped path when provided."""
+    if profile:
+        try:
+            return str(resolve_config_path("positions.yaml", profile=profile))
+        except FileNotFoundError:
+            pass
+    return POSITIONS_PATH
+
+
 # ── Request/Response Models ──────────────────────────────────────────
 
 
@@ -117,6 +133,12 @@ class PositionInput(BaseModel):
 
 class PositionUpdate(BaseModel):
     positions: list[PositionInput]
+
+
+class ProfileCreate(BaseModel):
+    name: str
+    username: str = ""
+    default_currency: str = "USD"
 
 
 class PipelineRunRequest(BaseModel):
@@ -245,11 +267,13 @@ async def logout(response: Response):
 @app.get("/api/positions")
 async def get_positions(
     display_currency: str = "USD",
+    profile: str | None = None,
     user: dict = Depends(require_auth),
 ):
     """Get current positions with live prices and computed weights."""
+    positions_path = _resolve_positions_path(profile)
     try:
-        pf = load_positions(POSITIONS_PATH)
+        pf = load_positions(positions_path)
         return _build_positions_response(pf, display_currency.upper())
     except FileNotFoundError:
         return {
@@ -261,32 +285,41 @@ async def get_positions(
 
 
 @app.put("/api/positions")
-async def update_positions(update: PositionUpdate, user: dict = Depends(require_auth)):
+async def update_positions(
+    update: PositionUpdate,
+    profile: str | None = None,
+    user: dict = Depends(require_auth),
+):
     """Replace all positions."""
+    positions_path = _resolve_positions_path(profile)
     try:
         positions = [
             Position(ticker=p.ticker, shares=p.shares, currency=p.currency)
             for p in update.positions
         ]
-        # Preserve the currencies list from the existing file
         try:
-            existing = load_positions(POSITIONS_PATH)
+            existing = load_positions(positions_path)
             currencies = existing.currencies
         except FileNotFoundError:
             currencies = list(DEFAULT_CURRENCIES)
 
         pf = PositionsFile(positions=positions, currencies=currencies)
-        save_positions(pf, POSITIONS_PATH)
+        save_positions(pf, positions_path)
         return {"status": "updated", "positions_count": len(positions)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/api/positions")
-async def add_position(position: PositionInput, user: dict = Depends(require_auth)):
+async def add_position(
+    position: PositionInput,
+    profile: str | None = None,
+    user: dict = Depends(require_auth),
+):
     """Add a single position."""
+    positions_path = _resolve_positions_path(profile)
     try:
-        pf = load_positions(POSITIONS_PATH)
+        pf = load_positions(positions_path)
     except FileNotFoundError:
         pf = PositionsFile(positions=[])
 
@@ -299,16 +332,21 @@ async def add_position(position: PositionInput, user: dict = Depends(require_aut
     pf.positions.append(
         Position(ticker=position.ticker, shares=position.shares, currency=position.currency)
     )
-    save_positions(pf, POSITIONS_PATH)
+    save_positions(pf, positions_path)
 
     return {"status": "added", "ticker": position.ticker.upper()}
 
 
 @app.delete("/api/positions/{ticker}")
-async def delete_position(ticker: str, user: dict = Depends(require_auth)):
+async def delete_position(
+    ticker: str,
+    profile: str | None = None,
+    user: dict = Depends(require_auth),
+):
     """Remove a position by ticker."""
+    positions_path = _resolve_positions_path(profile)
     try:
-        pf = load_positions(POSITIONS_PATH)
+        pf = load_positions(positions_path)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="No positions file")
 
@@ -319,23 +357,68 @@ async def delete_position(ticker: str, user: dict = Depends(require_auth)):
     if len(pf.positions) == original_count:
         raise HTTPException(status_code=404, detail=f"Ticker {ticker} not found")
 
-    save_positions(pf, POSITIONS_PATH)
+    save_positions(pf, positions_path)
     return {"status": "deleted", "ticker": ticker_upper}
 
 
 @app.get("/api/currencies")
-async def get_currencies(user: dict = Depends(require_auth)):
+async def get_currencies(
+    profile: str | None = None,
+    user: dict = Depends(require_auth),
+):
     """Get the configured list of currencies."""
+    positions_path = _resolve_positions_path(profile)
     try:
-        pf = load_positions(POSITIONS_PATH)
+        pf = load_positions(positions_path)
         return {"currencies": pf.currencies}
     except FileNotFoundError:
         return {"currencies": list(DEFAULT_CURRENCIES)}
 
 
+# ── Profile Routes ──────────────────────────────────────────────────
+
+
+@app.get("/api/profiles")
+async def get_profiles(user: dict = Depends(require_auth)):
+    """List all profiles."""
+    return {"profiles": list_profiles()}
+
+
+@app.post("/api/profiles")
+async def create_new_profile(body: ProfileCreate, user: dict = Depends(require_auth)):
+    """Create a new profile with default config files."""
+    try:
+        profile = create_profile(
+            name=body.name,
+            username=body.username,
+            default_currency=body.default_currency,
+        )
+        return {"status": "created", "profile": profile}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/profiles/{profile_id}")
+async def get_single_profile(profile_id: str, user: dict = Depends(require_auth)):
+    """Get a single profile by ID."""
+    profile = get_profile(profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail=f"Profile '{profile_id}' not found")
+    return {"profile": profile}
+
+
+@app.delete("/api/profiles/{profile_id}")
+async def remove_profile(profile_id: str, user: dict = Depends(require_auth)):
+    """Delete a profile and its config files."""
+    if not delete_profile(profile_id):
+        raise HTTPException(status_code=404, detail=f"Profile '{profile_id}' not found")
+    return {"status": "deleted", "profile_id": profile_id}
+
+
 @app.post("/api/pipeline/run")
 async def trigger_pipeline(
     request: PipelineRunRequest = PipelineRunRequest(),
+    profile: str | None = None,
     user: dict = Depends(require_auth),
 ):
     """Manually trigger a pipeline run."""
@@ -343,7 +426,10 @@ async def trigger_pipeline(
         run_date = date.fromisoformat(request.date) if request.date else None
         output_base = os.getenv("OUTPUT_BASE_PATH", "output")
         result = run_pipeline(
-            run_date=run_date, output_base=output_base, use_ollama=request.use_ollama
+            run_date=run_date,
+            output_base=output_base,
+            use_ollama=request.use_ollama,
+            profile=profile,
         )
         return {"status": "completed", **result}
     except Exception as e:
@@ -366,9 +452,14 @@ async def pipeline_status(user: dict = Depends(require_auth)):
 
 
 @app.get("/api/outputs")
-async def list_outputs(user: dict = Depends(require_auth)):
+async def list_outputs(
+    profile: str | None = None,
+    user: dict = Depends(require_auth),
+):
     """List available output directories."""
     output_base = Path(os.getenv("OUTPUT_BASE_PATH", "output"))
+    if profile:
+        output_base = output_base / profile
     if not output_base.exists():
         return {"outputs": []}
 
@@ -385,9 +476,15 @@ async def list_outputs(user: dict = Depends(require_auth)):
 
 
 @app.get("/api/outputs/{date_str}/digest")
-async def get_digest(date_str: str, user: dict = Depends(require_auth)):
+async def get_digest(
+    date_str: str,
+    profile: str | None = None,
+    user: dict = Depends(require_auth),
+):
     """Get the digest for a specific date."""
     output_base = Path(os.getenv("OUTPUT_BASE_PATH", "output"))
+    if profile:
+        output_base = output_base / profile
     digest_path = (
         output_base / f"{date_str}-analysis" / f"market_digest-{date_str}.md"
     )

@@ -15,6 +15,7 @@ import os
 import sys
 import time
 from datetime import date, datetime
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -61,10 +62,12 @@ def run_pipeline(
     metadata_path: str | None = None,
     output_base: str = "output",
     use_ollama: bool = True,
+    profile: str | None = None,
 ) -> dict:
     """Execute the complete market pipeline.
 
     Paths default to the config_loader resolution (user override → default).
+    If profile is provided, config files are resolved from the profile directory.
     Returns a dict with run statistics.
     """
     start_time = time.time()
@@ -81,11 +84,15 @@ def run_pipeline(
 
     # Resolve paths via config_loader if not explicitly provided
     if not positions_path:
-        positions_path = str(resolve_config_path("positions.yaml"))
+        positions_path = str(resolve_config_path("positions.yaml", profile=profile))
     if not sources_path:
-        sources_path = str(resolve_config_path("sources.yaml"))
+        sources_path = str(resolve_config_path("sources.yaml", profile=profile))
     if not metadata_path:
         metadata_path = str(resolve_data_path("metadata/ticker_metadata.yaml"))
+
+    # Scope output directory to profile if provided
+    if profile:
+        output_base = str(Path(output_base) / profile)
 
     # Step 1: Create output directory
     output_dir = ensure_output_dir(output_base, run_date)

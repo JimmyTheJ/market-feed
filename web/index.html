@@ -445,6 +445,138 @@
         .btn-confirm { color: var(--green); }
         .btn-confirm:hover { border-color: var(--green); }
 
+        /* ── Profile Selector ─────────────────────────────────────── */
+        .profile-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: var(--bg);
+            z-index: 900;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .profile-overlay.hidden { display: none; }
+        .profile-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 32px;
+            width: 100%;
+            max-width: 420px;
+            margin: 16px;
+        }
+        .profile-card h2 {
+            font-size: 20px;
+            color: var(--accent);
+            margin-bottom: 4px;
+            text-align: center;
+        }
+        .profile-card .subtitle {
+            font-size: 13px;
+            color: var(--text-muted);
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .profile-card input, .profile-card select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--bg);
+            color: var(--text);
+            font-size: 14px;
+            margin-bottom: 12px;
+        }
+        .profile-card input:focus, .profile-card select:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        .profile-list {
+            list-style: none;
+            margin-bottom: 16px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .profile-list-item {
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            margin-bottom: 6px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: all 0.15s ease;
+        }
+        .profile-list-item:hover {
+            border-color: var(--accent);
+            background: rgba(88,166,255,0.05);
+        }
+        .profile-list-item .pname {
+            font-weight: 600;
+            font-size: 14px;
+        }
+        .profile-list-item .pmeta {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+        .profile-divider {
+            text-align: center;
+            font-size: 12px;
+            color: var(--text-muted);
+            margin: 16px 0;
+            position: relative;
+        }
+        .profile-divider::before,
+        .profile-divider::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            width: 35%;
+            height: 1px;
+            background: var(--border);
+        }
+        .profile-divider::before { left: 0; }
+        .profile-divider::after { right: 0; }
+        .profile-create-btn {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            border-radius: var(--radius);
+            background: var(--accent);
+            color: #fff;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .profile-create-btn:hover { opacity: 0.9; }
+        .profile-create-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .profile-switcher {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+        .profile-switcher .profile-name {
+            color: var(--green);
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .profile-switcher .profile-name:hover {
+            text-decoration: underline;
+        }
+        .profile-delete-btn {
+            background: none;
+            border: none;
+            color: var(--red);
+            font-size: 14px;
+            cursor: pointer;
+            padding: 2px 6px;
+            opacity: 0.6;
+        }
+        .profile-delete-btn:hover { opacity: 1; }
+
         @media (max-width: 480px) {
             .position-info { gap: 8px; }
             .ticker { font-size: 14px; min-width: 40px; }
@@ -454,6 +586,24 @@
     </style>
 </head>
 <body>
+    <!-- Profile Selector Overlay -->
+    <div class="profile-overlay hidden" id="profile-overlay">
+        <div class="profile-card">
+            <h2>📊 Market Pipeline</h2>
+            <div class="subtitle">Select or create a profile</div>
+            <ul class="profile-list" id="profile-list"></ul>
+            <div class="profile-divider">or create new</div>
+            <input type="text" id="profile-name" placeholder="Profile name" autocomplete="off">
+            <input type="text" id="profile-username" placeholder="Username (optional)" autocomplete="off">
+            <select id="profile-currency">
+                <option value="USD">USD — Default Currency</option>
+                <option value="CAD">CAD — Default Currency</option>
+                <option value="BTC">BTC — Default Currency</option>
+            </select>
+            <button class="profile-create-btn" id="profile-create-btn" onclick="createProfile()">Create Profile</button>
+        </div>
+    </div>
+
     <!-- Login Overlay -->
     <div class="login-overlay hidden" id="login-overlay">
         <div class="login-card">
@@ -469,6 +619,10 @@
     <div class="header">
         <h1>📊 Market Pipeline</h1>
         <div style="display: flex; align-items: center; gap: 12px;">
+            <div class="profile-switcher" id="profile-switcher" style="display: none;">
+                <span class="profile-name" id="active-profile-name" onclick="showProfileSelector()" title="Switch profile"></span>
+                <button class="profile-delete-btn" onclick="showProfileSelector()" title="Switch profile">&#9998;</button>
+            </div>
             <div class="user-badge" id="user-badge" style="display: none;">
                 <span class="username" id="user-name"></span>
                 <button class="logout-btn" onclick="doLogout()">Logout</button>
@@ -563,6 +717,17 @@
         const API = window.location.origin;
         let authEnabled = false;
         let currentUser = null;
+        let currentProfile = null;  // { id, name, username, default_currency }
+
+        function profileParam() {
+            return currentProfile ? `profile=${encodeURIComponent(currentProfile.id)}` : '';
+        }
+
+        function apiUrl(path, extraParams = '') {
+            const pp = profileParam();
+            const params = [pp, extraParams].filter(Boolean).join('&');
+            return API + path + (params ? (path.includes('?') ? '&' : '?') + params : '');
+        }
 
         // ── Auth ────────────────────────────────────────────────────────
 
@@ -631,8 +796,22 @@
                     currentUser = data.user;
                     hideLogin();
                     showUserBadge(data.user);
-                    loadPositions();
-                    loadSchedule();
+                    // Check for saved profile
+                    const saved = localStorage.getItem('selectedProfile');
+                    if (saved) {
+                        try {
+                            currentProfile = JSON.parse(saved);
+                            displayCurrency = currentProfile.default_currency || 'USD';
+                            updateProfileBadge();
+                            loadPositions();
+                            loadSchedule();
+                        } catch (e) {
+                            localStorage.removeItem('selectedProfile');
+                            showProfileSelector();
+                        }
+                    } else {
+                        showProfileSelector();
+                    }
                 } else {
                     const data = await res.json();
                     err.textContent = data.detail || 'Login failed';
@@ -678,6 +857,125 @@
             '#f778ba', '#79c0ff', '#56d364', '#e3b341', '#ff7b72',
             '#d2a8ff', '#ff9bce'
         ];
+
+        // ── Profiles ────────────────────────────────────────────────────
+
+        async function loadProfiles() {
+            try {
+                const res = await apiFetch(API + '/api/profiles');
+                const data = await res.json();
+                return data.profiles || [];
+            } catch (e) {
+                return [];
+            }
+        }
+
+        function showProfileSelector() {
+            document.getElementById('profile-overlay').classList.remove('hidden');
+            refreshProfileList();
+        }
+
+        function hideProfileSelector() {
+            document.getElementById('profile-overlay').classList.add('hidden');
+        }
+
+        async function refreshProfileList() {
+            const list = document.getElementById('profile-list');
+            list.innerHTML = '<li style="text-align:center;color:var(--text-muted);padding:8px"><span class="spinner"></span></li>';
+
+            const profiles = await loadProfiles();
+            if (profiles.length === 0) {
+                list.innerHTML = '<li style="text-align:center;color:var(--text-muted);padding:12px;font-size:13px">No profiles yet</li>';
+                return;
+            }
+            list.innerHTML = profiles.map(p => `
+                <li class="profile-list-item" onclick="selectProfile('${p.id}')">
+                    <div>
+                        <div class="pname">${p.name}</div>
+                        <div class="pmeta">${p.username ? p.username + ' · ' : ''}${p.default_currency}</div>
+                    </div>
+                    <button class="profile-delete-btn" onclick="event.stopPropagation();deleteProfileConfirm('${p.id}','${p.name}')" title="Delete profile">✕</button>
+                </li>
+            `).join('');
+        }
+
+        async function selectProfile(profileId) {
+            const profiles = await loadProfiles();
+            const p = profiles.find(pr => pr.id === profileId);
+            if (!p) return;
+            currentProfile = p;
+            displayCurrency = p.default_currency || 'USD';
+            localStorage.setItem('selectedProfile', JSON.stringify(p));
+            hideProfileSelector();
+            updateProfileBadge();
+            loadPositions();
+            loadSchedule();
+        }
+
+        async function createProfile() {
+            const name = document.getElementById('profile-name').value.trim();
+            const username = document.getElementById('profile-username').value.trim();
+            const currency = document.getElementById('profile-currency').value;
+            const btn = document.getElementById('profile-create-btn');
+
+            if (!name) { showToast('Enter a profile name', 'error'); return; }
+
+            btn.disabled = true;
+            btn.textContent = 'Creating...';
+            try {
+                const res = await apiFetch(API + '/api/profiles', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, username, default_currency: currency }),
+                });
+                if (!res.ok) {
+                    const err = await res.json();
+                    showToast(err.detail || 'Failed to create profile', 'error');
+                    return;
+                }
+                const data = await res.json();
+                document.getElementById('profile-name').value = '';
+                document.getElementById('profile-username').value = '';
+                showToast(`Profile "${name}" created`);
+                selectProfile(data.profile.id);
+            } catch (e) {
+                showToast('Network error', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Create Profile';
+            }
+        }
+
+        async function deleteProfileConfirm(id, name) {
+            if (!confirm(`Delete profile "${name}"? This removes all its data.`)) return;
+            try {
+                const res = await apiFetch(API + `/api/profiles/${id}`, { method: 'DELETE' });
+                if (res.ok) {
+                    showToast(`Deleted "${name}"`);
+                    if (currentProfile && currentProfile.id === id) {
+                        currentProfile = null;
+                        localStorage.removeItem('selectedProfile');
+                        updateProfileBadge();
+                        showProfileSelector();
+                    } else {
+                        refreshProfileList();
+                    }
+                }
+            } catch (e) {
+                showToast('Failed to delete profile', 'error');
+            }
+        }
+
+        function updateProfileBadge() {
+            const switcher = document.getElementById('profile-switcher');
+            const nameEl = document.getElementById('active-profile-name');
+            if (currentProfile) {
+                nameEl.textContent = currentProfile.name;
+                switcher.style.display = 'flex';
+            } else {
+                switcher.style.display = 'none';
+            }
+        }
 
         // ── Tabs ────────────────────────────────────────────────────────
 
@@ -746,7 +1044,7 @@
 
         async function loadPositions() {
             try {
-                const res = await apiFetch(API + '/api/positions?display_currency=' + displayCurrency);
+                const res = await apiFetch(apiUrl('/api/positions', 'display_currency=' + displayCurrency));
                 const data = await res.json();
                 currencies = data.currencies || ['USD', 'CAD', 'BTC'];
                 totalValue = data.total_value || 0;
@@ -895,7 +1193,7 @@
 
         async function saveAllPositions(positions, successMsg) {
             try {
-                const res = await apiFetch(API + '/api/positions', {
+                const res = await apiFetch(apiUrl('/api/positions'), {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ positions })
@@ -924,7 +1222,7 @@
             result.style.color = 'var(--text-muted)';
 
             try {
-                const res = await apiFetch(API + '/api/pipeline/run', {
+                const res = await apiFetch(apiUrl('/api/pipeline/run'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ use_ollama: useOllama })
@@ -969,7 +1267,7 @@
         async function loadOutputs() {
             const list = document.getElementById('output-list');
             try {
-                const res = await apiFetch(API + '/api/outputs');
+                const res = await apiFetch(apiUrl('/api/outputs'));
                 const data = await res.json();
                 if (!data.outputs || data.outputs.length === 0) {
                     list.innerHTML = '<li style="color:var(--text-muted);padding:16px 0;text-align:center">No outputs yet. Run the pipeline first!</li>';
@@ -997,7 +1295,7 @@
             content.innerHTML = '<span class="spinner"></span> Loading...';
 
             try {
-                const res = await apiFetch(API + `/api/outputs/${dateStr}/digest`);
+                const res = await apiFetch(apiUrl(`/api/outputs/${dateStr}/digest`));
                 if (!res.ok) { content.textContent = 'Digest not found.'; return; }
                 const data = await res.json();
                 content.innerHTML = markdownToHtml(data.content);
@@ -1029,11 +1327,33 @@
             if (e.key === 'Enter') addPosition();
         });
 
-        // Check auth status first, then load data
+        // Handle enter key on profile creation form
+        document.getElementById('profile-name').addEventListener('keydown', e => {
+            if (e.key === 'Enter') document.getElementById('profile-username').focus();
+        });
+        document.getElementById('profile-username').addEventListener('keydown', e => {
+            if (e.key === 'Enter') createProfile();
+        });
+
+        // Check auth status first, then check profile, then load data
         checkAuth().then(authenticated => {
-            if (authenticated) {
-                loadPositions();
-                loadSchedule();
+            if (!authenticated) return;
+
+            // Restore saved profile from localStorage
+            const saved = localStorage.getItem('selectedProfile');
+            if (saved) {
+                try {
+                    currentProfile = JSON.parse(saved);
+                    displayCurrency = currentProfile.default_currency || 'USD';
+                    updateProfileBadge();
+                    loadPositions();
+                    loadSchedule();
+                } catch (e) {
+                    localStorage.removeItem('selectedProfile');
+                    showProfileSelector();
+                }
+            } else {
+                showProfileSelector();
             }
         });
     </script>
