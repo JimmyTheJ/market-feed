@@ -32,7 +32,11 @@ def load_metadata_registry(path: str | Path = DEFAULT_REGISTRY_PATH) -> dict:
 
 
 def enrich_position(position: Position, registry: dict) -> EnrichedPosition:
-    """Enrich a single position using the registry and fallback rules."""
+    """Enrich a single position using the registry and fallback rules.
+
+    The weight on the EnrichedPosition defaults to 0.0 here; callers that need
+    accurate portfolio weights should overwrite it after computing from prices.
+    """
     ticker = position.ticker.upper()
 
     # Tier 1: Local registry lookup
@@ -43,7 +47,7 @@ def enrich_position(position: Position, registry: dict) -> EnrichedPosition:
         safe_fields = {
             k: v for k, v in metadata.items() if k not in ("ticker", "weight")
         }
-        return EnrichedPosition(ticker=ticker, weight=position.weight, **safe_fields)
+        return EnrichedPosition(ticker=ticker, weight=0.0, **safe_fields)
 
     # Tier 2: External API (stubbed for future implementation)
     logger.info(f"No local metadata for {ticker}, using fallback rules")
@@ -56,7 +60,7 @@ def _fallback_enrich(position: Position) -> EnrichedPosition:
     """Apply rule-based fallback enrichment for unknown tickers."""
     ticker = position.ticker.upper()
 
-    enriched = EnrichedPosition(ticker=ticker, weight=position.weight)
+    enriched = EnrichedPosition(ticker=ticker, weight=0.0)
 
     # Common ETF fallback patterns
     known_etfs = {

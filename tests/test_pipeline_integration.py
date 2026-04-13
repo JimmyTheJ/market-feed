@@ -114,8 +114,14 @@ def _mock_fetch_all_sources(sources, timeout=30.0):
 
 
 class TestPipelineIntegration:
+    @patch("src.main.get_rates_to", return_value={"USD": 1.0})
+    @patch("src.main.get_prices", return_value={
+        "IBIT": 50.0, "QQQ": 400.0, "TSLA": 200.0, "GLD": 180.0,
+        "TLT": 90.0, "UNG": 10.0, "SPY": 450.0, "EFA": 70.0,
+        "XLE": 85.0, "SLV": 25.0, "DBC": 20.0, "ETHA": 30.0,
+    })
     @patch("src.main.fetch_all_sources", side_effect=_mock_fetch_all_sources)
-    def test_full_pipeline_run(self, mock_fetch, tmp_path):
+    def test_full_pipeline_run(self, mock_fetch, mock_prices, mock_forex, tmp_path):
         """Test the complete pipeline end-to-end with mock data."""
         # Set up config paths within tmp
         config_dir = tmp_path / "config"
@@ -126,19 +132,20 @@ class TestPipelineIntegration:
 
         # Write positions
         positions_data = {
+            "currencies": ["USD", "CAD", "BTC"],
             "positions": [
-                {"ticker": "IBIT", "weight": 0.15},
-                {"ticker": "QQQ", "weight": 0.12},
-                {"ticker": "TSLA", "weight": 0.10},
-                {"ticker": "GLD", "weight": 0.10},
-                {"ticker": "TLT", "weight": 0.08},
-                {"ticker": "UNG", "weight": 0.05},
-                {"ticker": "SPY", "weight": 0.12},
-                {"ticker": "EFA", "weight": 0.05},
-                {"ticker": "XLE", "weight": 0.08},
-                {"ticker": "SLV", "weight": 0.05},
-                {"ticker": "DBC", "weight": 0.05},
-                {"ticker": "ETHA", "weight": 0.05},
+                {"ticker": "IBIT", "shares": 100, "currency": "USD"},
+                {"ticker": "QQQ", "shares": 50, "currency": "USD"},
+                {"ticker": "TSLA", "shares": 25, "currency": "USD"},
+                {"ticker": "GLD", "shares": 30, "currency": "USD"},
+                {"ticker": "TLT", "shares": 50, "currency": "USD"},
+                {"ticker": "UNG", "shares": 200, "currency": "USD"},
+                {"ticker": "SPY", "shares": 20, "currency": "USD"},
+                {"ticker": "EFA", "shares": 60, "currency": "USD"},
+                {"ticker": "XLE", "shares": 40, "currency": "USD"},
+                {"ticker": "SLV", "shares": 100, "currency": "USD"},
+                {"ticker": "DBC", "shares": 75, "currency": "USD"},
+                {"ticker": "ETHA", "shares": 50, "currency": "USD"},
             ]
         }
         with open(config_dir / "positions.yaml", "w") as f:
@@ -342,15 +349,20 @@ class TestPipelineIntegration:
         if btc_articles:
             assert btc_articles[0]["position_scores"]["IBIT"] > 0
 
+    @patch("src.main.get_rates_to", return_value={"USD": 1.0})
+    @patch("src.main.get_prices", return_value={"SPY": 450.0})
     @patch("src.main.fetch_all_sources", return_value=[])
-    def test_pipeline_with_no_articles(self, mock_fetch, tmp_path):
+    def test_pipeline_with_no_articles(self, mock_fetch, mock_prices, mock_forex, tmp_path):
         """Pipeline should complete gracefully even with no articles."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         data_dir = tmp_path / "data" / "metadata"
         data_dir.mkdir(parents=True)
 
-        positions_data = {"positions": [{"ticker": "SPY", "weight": 1.0}]}
+        positions_data = {
+            "currencies": ["USD", "CAD", "BTC"],
+            "positions": [{"ticker": "SPY", "shares": 100, "currency": "USD"}],
+        }
         with open(config_dir / "positions.yaml", "w") as f:
             yaml.dump(positions_data, f)
 

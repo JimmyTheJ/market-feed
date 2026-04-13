@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from .models import Position, PositionsFile
+from .models import PositionsFile
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +24,6 @@ def load_positions(path: str | Path = "config/positions.yaml") -> PositionsFile:
 
     positions_file = PositionsFile(**data)
 
-    warning = positions_file.weight_warning()
-    if warning:
-        logger.warning(warning)
-
     logger.info(f"Loaded {len(positions_file.positions)} positions")
     return positions_file
 
@@ -39,10 +35,12 @@ def save_positions(
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    data = {
+    data: dict = {
+        "currencies": positions_file.currencies,
         "positions": [
-            {"ticker": p.ticker, "weight": p.weight} for p in positions_file.positions
-        ]
+            {"ticker": p.ticker, "shares": p.shares, "currency": p.currency}
+            for p in positions_file.positions
+        ],
     }
 
     with open(path, "w") as f:

@@ -1,36 +1,53 @@
+currencies:
+  - USD
+  - CAD
+  - BTC
+
 positions:
   - ticker: IBIT
-    weight: 0.15
+    shares: 100
+    currency: USD
 
   - ticker: ETHA
-    weight: 0.05
+    shares: 50
+    currency: USD
 
   - ticker: TSLA
-    weight: 0.10
+    shares: 25
+    currency: USD
 
   - ticker: XLE
-    weight: 0.08
+    shares: 40
+    currency: USD
 
   - ticker: GLD
-    weight: 0.10
+    shares: 30
+    currency: USD
 
   - ticker: SLV
-    weight: 0.05
+    shares: 100
+    currency: USD
 
   - ticker: SPY
-    weight: 0.12
+    shares: 20
+    currency: USD
 
   - ticker: QQQ
-    weight: 0.12
+    shares: 15
+    currency: USD
 
   - ticker: TLT
-    weight: 0.08
+    shares: 50
+    currency: USD
 
   - ticker: DBC
-    weight: 0.05
+    shares: 75
+    currency: USD
 
   - ticker: UNG
-    weight: 0.05
+    shares: 200
+    currency: USD
 
   - ticker: EFA
-    weight: 0.05
+    shares: 60
+    currency: USD

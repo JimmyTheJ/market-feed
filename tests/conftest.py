@@ -23,12 +23,13 @@ from src.models import (
 def sample_positions_data():
     """Raw positions dict matching positions.yaml format."""
     return {
+        "currencies": ["USD", "CAD", "BTC"],
         "positions": [
-            {"ticker": "IBIT", "weight": 0.35},
-            {"ticker": "QQQ", "weight": 0.30},
-            {"ticker": "CPER", "weight": 0.20},
-            {"ticker": "UNG", "weight": 0.15},
-        ]
+            {"ticker": "IBIT", "shares": 100, "currency": "USD"},
+            {"ticker": "QQQ", "shares": 50, "currency": "USD"},
+            {"ticker": "CPER", "shares": 75, "currency": "USD"},
+            {"ticker": "UNG", "shares": 200, "currency": "USD"},
+        ],
     }
 
 

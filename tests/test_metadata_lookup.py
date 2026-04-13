@@ -25,12 +25,11 @@ class TestLoadMetadataRegistry:
 
 class TestEnrichPosition:
     def test_enrich_known_ticker(self, sample_metadata_registry):
-        pos = Position(ticker="IBIT", weight=0.35)
+        pos = Position(ticker="IBIT", shares=100)
         result = enrich_position(pos, sample_metadata_registry)
 
         assert isinstance(result, EnrichedPosition)
         assert result.ticker == "IBIT"
-        assert result.weight == 0.35
         assert result.instrument_type == "etf"
         assert result.asset_class == "crypto"
         assert result.underlying == "bitcoin"
@@ -39,29 +38,29 @@ class TestEnrichPosition:
         assert "real_yields" in result.macro_sensitivities
 
     def test_enrich_unknown_ticker_uses_fallback(self, sample_metadata_registry):
-        pos = Position(ticker="AAPL", weight=0.10)
+        pos = Position(ticker="AAPL", shares=50)
         result = enrich_position(pos, sample_metadata_registry)
 
         assert result.ticker == "AAPL"
-        assert result.weight == 0.10
         assert result.instrument_type == "equity"  # fallback default
 
-    def test_weight_preserved(self, sample_metadata_registry):
-        pos = Position(ticker="QQQ", weight=0.42)
+    def test_enrich_returns_zero_weight(self, sample_metadata_registry):
+        """Weight defaults to 0.0; callers overwrite from live prices."""
+        pos = Position(ticker="QQQ", shares=42)
         result = enrich_position(pos, sample_metadata_registry)
-        assert result.weight == 0.42
+        assert result.weight == 0.0
 
 
 class TestFallbackEnrich:
     def test_known_etf_fallback(self):
-        pos = Position(ticker="DIA", weight=0.1)
+        pos = Position(ticker="DIA", shares=10)
         result = _fallback_enrich(pos)
         assert result.instrument_type == "etf"
         assert result.asset_class == "equities"
         assert result.underlying == "dow_jones"
 
     def test_unknown_ticker_gets_generic(self):
-        pos = Position(ticker="ZZZZ", weight=0.05)
+        pos = Position(ticker="ZZZZ", shares=5)
         result = _fallback_enrich(pos)
         assert result.instrument_type == "equity"
         assert result.asset_class == "equities"

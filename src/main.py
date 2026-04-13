@@ -15,18 +15,19 @@ import os
 import sys
 import time
 from datetime import date, datetime
-from pathlib import Path
 
 from dotenv import load_dotenv
 
-from .config_loader import load_yaml_config, resolve_config_path, resolve_data_path
+from .config_loader import resolve_config_path, resolve_data_path
 from .date_utils import today_date
 from .digest_writer import generate_digest
+from .forex_service import get_rates_to
 from .ingestion import fetch_all_sources, load_sources
 from .metadata_lookup import enrich_all_positions
 from .models import DailyPositionsSnapshot
 from .normalization import normalize_all
 from .positions_loader import load_positions
+from .price_service import get_prices
 from .scoring import score_and_rank
 from .storage import (
     ensure_output_dir,
@@ -94,13 +95,38 @@ def run_pipeline(
     log("Loading positions...")
     positions_file = load_positions(positions_path)
     log(f"Loaded {len(positions_file.positions)} positions")
-    warning = positions_file.weight_warning()
-    if warning:
-        log(f"WARNING: {warning}")
+
+    # Step 2b: Compute portfolio weights from live prices
+    log("Fetching live prices for weight computation...")
+    tickers = [p.ticker for p in positions_file.positions]
+    prices = get_prices(tickers)
+    native_currencies = list({p.currency for p in positions_file.positions})
+    forex = get_rates_to("USD", native_currencies)
+
+    total_value = 0.0
+    position_values: list[float] = []
+    for p in positions_file.positions:
+        price = prices.get(p.ticker)
+        fx = forex.get(p.currency, 1.0)
+        val = (p.shares * price * fx) if price is not None else 0.0
+        position_values.append(val)
+        total_value += val
+
+    # Build weight-annotated positions for the enrichment step
+    weighted_positions = []
+    for p, val in zip(positions_file.positions, position_values):
+        weight = val / total_value if total_value > 0 else 0.0
+        weighted_positions.append(
+            type("_WPos", (), {"ticker": p.ticker, "weight": weight})()
+        )
+    log(f"Computed portfolio weights (total ~${total_value:,.0f} USD)")
 
     # Step 3: Enrich positions
     log("Enriching positions with metadata...")
     enriched = enrich_all_positions(positions_file.positions, metadata_path)
+    # Overwrite enriched weights with live-price-computed weights
+    for ep, wp in zip(enriched, weighted_positions):
+        ep.weight = wp.weight
     log(f"Enriched {len(enriched)} positions")
 
     # Step 4: Write daily positions snapshot

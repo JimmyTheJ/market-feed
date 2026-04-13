@@ -31,8 +31,6 @@ def generate_digest(
         lines.append(f"- **Main themes:** {', '.join(summary.top_themes[:5])}")
     tickers = ", ".join(p.ticker for p in snapshot.positions)
     lines.append(f"- **Positions:** {tickers}")
-    total_weight = sum(p.weight for p in snapshot.positions)
-    lines.append(f"- **Total weight:** {total_weight:.0%}")
     lines.append("")
 
     # Top Portfolio Signals

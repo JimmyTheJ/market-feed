@@ -13,7 +13,8 @@ class TestLoadPositions:
         assert isinstance(result, PositionsFile)
         assert len(result.positions) == 4
         assert result.positions[0].ticker == "IBIT"
-        assert result.positions[0].weight == 0.35
+        assert result.positions[0].shares == 100
+        assert result.positions[0].currency == "USD"
 
     def test_load_missing_file(self, tmp_path):
         with pytest.raises(FileNotFoundError):
@@ -35,55 +36,61 @@ class TestLoadPositions:
 class TestPositionValidation:
     def test_empty_ticker_rejected(self):
         with pytest.raises(ValueError, match="ticker must be non-empty"):
-            Position(ticker="", weight=0.5)
+            Position(ticker="", shares=10)
 
     def test_whitespace_ticker_rejected(self):
         with pytest.raises(ValueError, match="ticker must be non-empty"):
-            Position(ticker="   ", weight=0.5)
+            Position(ticker="   ", shares=10)
 
     def test_ticker_uppercased(self):
-        p = Position(ticker="qqq", weight=0.3)
+        p = Position(ticker="qqq", shares=50)
         assert p.ticker == "QQQ"
 
     def test_ticker_stripped(self):
-        p = Position(ticker="  SPY  ", weight=0.1)
+        p = Position(ticker="  SPY  ", shares=10)
         assert p.ticker == "SPY"
 
-    def test_negative_weight_rejected(self):
+    def test_negative_shares_rejected(self):
         with pytest.raises(ValueError, match="non-negative"):
-            Position(ticker="SPY", weight=-0.5)
+            Position(ticker="SPY", shares=-5)
 
-    def test_zero_weight_allowed(self):
-        p = Position(ticker="SPY", weight=0.0)
-        assert p.weight == 0.0
+    def test_zero_shares_allowed(self):
+        p = Position(ticker="SPY", shares=0.0)
+        assert p.shares == 0.0
+
+    def test_currency_defaults_to_usd(self):
+        p = Position(ticker="SPY", shares=10)
+        assert p.currency == "USD"
+
+    def test_currency_uppercased(self):
+        p = Position(ticker="SPY", shares=10, currency="cad")
+        assert p.currency == "CAD"
+
+    def test_empty_currency_rejected(self):
+        with pytest.raises(ValueError, match="currency must be non-empty"):
+            Position(ticker="SPY", shares=10, currency="")
 
 
 class TestPositionsFile:
-    def test_weight_sum(self, sample_positions_file):
-        assert abs(sample_positions_file.weight_sum() - 1.0) < 0.001
-
-    def test_weight_warning_none_when_valid(self, sample_positions_file):
-        assert sample_positions_file.weight_warning() is None
-
-    def test_weight_warning_when_sum_off(self):
-        pf = PositionsFile(
-            positions=[
-                Position(ticker="A", weight=0.5),
-                Position(ticker="B", weight=0.3),
-            ]
-        )
-        warning = pf.weight_warning()
-        assert warning is not None
-        assert "0.8" in warning
-
     def test_duplicate_tickers_rejected(self):
         with pytest.raises(ValueError, match="Duplicate ticker"):
             PositionsFile(
                 positions=[
-                    Position(ticker="SPY", weight=0.5),
-                    Position(ticker="SPY", weight=0.3),
+                    Position(ticker="SPY", shares=10),
+                    Position(ticker="SPY", shares=20),
                 ]
             )
+
+    def test_currencies_default(self):
+        pf = PositionsFile(positions=[Position(ticker="SPY", shares=10)])
+        assert pf.currencies == ["USD", "CAD", "BTC"]
+
+    def test_custom_currencies(self):
+        pf = PositionsFile(
+            currencies=["USD", "EUR"],
+            positions=[Position(ticker="SPY", shares=10)],
+        )
+        assert pf.currencies == ["USD", "EUR"]
 
 
 class TestSavePositions:
@@ -99,7 +106,9 @@ class TestSavePositions:
             sample_positions_file.positions, reloaded.positions
         ):
             assert orig.ticker == loaded.ticker
-            assert abs(orig.weight - loaded.weight) < 0.001
+            assert abs(orig.shares - loaded.shares) < 0.001
+            assert orig.currency == loaded.currency
+        assert reloaded.currencies == sample_positions_file.currencies
 
     def test_save_creates_parent_dirs(self, tmp_path, sample_positions_file):
         filepath = tmp_path / "deep" / "nested" / "positions.yaml"

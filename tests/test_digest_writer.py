@@ -93,6 +93,7 @@ class TestGenerateDigest:
 
     def test_contains_weight_info(self, sample_portfolio_summary, sample_snapshot):
         digest = generate_digest(sample_portfolio_summary, sample_snapshot)
+        # Position summaries still contain weight percentages
         assert "35%" in digest
         assert "30%" in digest
 

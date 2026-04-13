@@ -1,7 +1,8 @@
 """FastAPI server for position management and pipeline control.
 
 Provides:
-- REST API for CRUD operations on positions
+- REST API for CRUD operations on positions (shares-based)
+- Live price lookups and forex conversion
 - Manual pipeline trigger endpoint
 - Scheduled daily pipeline runs via APScheduler
 - Mobile-friendly web UI served at /
@@ -20,7 +21,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from ..auth.middleware import (
@@ -33,9 +34,11 @@ from ..auth.middleware import (
     require_auth,
 )
 from ..config_loader import resolve_config_path
+from ..forex_service import get_rates_to
 from ..main import run_pipeline, setup_logging
-from ..models import Position, PositionsFile
+from ..models import DEFAULT_CURRENCIES, Position, PositionsFile
 from ..positions_loader import load_positions, save_positions
+from ..price_service import get_prices
 
 load_dotenv()
 setup_logging(os.getenv("LOG_LEVEL", "INFO"))
@@ -108,7 +111,8 @@ if not POSITIONS_PATH:
 
 class PositionInput(BaseModel):
     ticker: str
-    weight: float
+    shares: float
+    currency: str = "USD"
 
 
 class PositionUpdate(BaseModel):
@@ -118,6 +122,55 @@ class PositionUpdate(BaseModel):
 class PipelineRunRequest(BaseModel):
     date: Optional[str] = None
     use_ollama: bool = True
+
+
+# ── Helpers ──────────────────────────────────────────────────────────
+
+
+def _build_positions_response(
+    pf: PositionsFile, display_currency: str = "USD"
+) -> dict:
+    """Build the full positions response with live prices and forex conversion."""
+    tickers = [p.ticker for p in pf.positions]
+    prices = get_prices(tickers) if tickers else {}
+
+    native_currencies = list({p.currency for p in pf.positions})
+    if display_currency not in native_currencies:
+        native_currencies.append(display_currency)
+    forex = get_rates_to(display_currency, native_currencies)
+
+    enriched = []
+    total_value = 0.0
+    for p in pf.positions:
+        price = prices.get(p.ticker)
+        fx_rate = forex.get(p.currency, 1.0)
+        native_value = (p.shares * price) if price is not None else None
+        display_value = (native_value * fx_rate) if native_value is not None else None
+        if display_value is not None:
+            total_value += display_value
+        enriched.append(
+            {
+                "ticker": p.ticker,
+                "shares": p.shares,
+                "currency": p.currency,
+                "price": round(price, 4) if price is not None else None,
+                "native_value": round(native_value, 2) if native_value is not None else None,
+                "display_value": round(display_value, 2) if display_value is not None else None,
+            }
+        )
+
+    for item in enriched:
+        if total_value > 0 and item["display_value"] is not None:
+            item["weight"] = round(item["display_value"] / total_value, 6)
+        else:
+            item["weight"] = None
+
+    return {
+        "positions": enriched,
+        "total_value": round(total_value, 2),
+        "display_currency": display_currency,
+        "currencies": pf.currencies,
+    }
 
 
 # ── Routes ───────────────────────────────────────────────────────────
@@ -190,19 +243,21 @@ async def logout(response: Response):
 
 
 @app.get("/api/positions")
-async def get_positions(user: dict = Depends(require_auth)):
-    """Get current positions."""
+async def get_positions(
+    display_currency: str = "USD",
+    user: dict = Depends(require_auth),
+):
+    """Get current positions with live prices and computed weights."""
     try:
         pf = load_positions(POSITIONS_PATH)
-        return {
-            "positions": [
-                {"ticker": p.ticker, "weight": p.weight} for p in pf.positions
-            ],
-            "weight_sum": round(pf.weight_sum(), 4),
-            "warning": pf.weight_warning(),
-        }
+        return _build_positions_response(pf, display_currency.upper())
     except FileNotFoundError:
-        return {"positions": [], "weight_sum": 0, "warning": "No positions file found"}
+        return {
+            "positions": [],
+            "total_value": 0,
+            "display_currency": display_currency.upper(),
+            "currencies": list(DEFAULT_CURRENCIES),
+        }
 
 
 @app.put("/api/positions")
@@ -210,16 +265,19 @@ async def update_positions(update: PositionUpdate, user: dict = Depends(require_
     """Replace all positions."""
     try:
         positions = [
-            Position(ticker=p.ticker, weight=p.weight) for p in update.positions
+            Position(ticker=p.ticker, shares=p.shares, currency=p.currency)
+            for p in update.positions
         ]
-        pf = PositionsFile(positions=positions)
+        # Preserve the currencies list from the existing file
+        try:
+            existing = load_positions(POSITIONS_PATH)
+            currencies = existing.currencies
+        except FileNotFoundError:
+            currencies = list(DEFAULT_CURRENCIES)
+
+        pf = PositionsFile(positions=positions, currencies=currencies)
         save_positions(pf, POSITIONS_PATH)
-        return {
-            "status": "updated",
-            "positions_count": len(positions),
-            "weight_sum": round(pf.weight_sum(), 4),
-            "warning": pf.weight_warning(),
-        }
+        return {"status": "updated", "positions_count": len(positions)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -238,7 +296,9 @@ async def add_position(position: PositionInput, user: dict = Depends(require_aut
                 status_code=400, detail=f"Ticker {position.ticker} already exists"
             )
 
-    pf.positions.append(Position(ticker=position.ticker, weight=position.weight))
+    pf.positions.append(
+        Position(ticker=position.ticker, shares=position.shares, currency=position.currency)
+    )
     save_positions(pf, POSITIONS_PATH)
 
     return {"status": "added", "ticker": position.ticker.upper()}
@@ -261,6 +321,16 @@ async def delete_position(ticker: str, user: dict = Depends(require_auth)):
 
     save_positions(pf, POSITIONS_PATH)
     return {"status": "deleted", "ticker": ticker_upper}
+
+
+@app.get("/api/currencies")
+async def get_currencies(user: dict = Depends(require_auth)):
+    """Get the configured list of currencies."""
+    try:
+        pf = load_positions(POSITIONS_PATH)
+        return {"currencies": pf.currencies}
+    except FileNotFoundError:
+        return {"currencies": list(DEFAULT_CURRENCIES)}
 
 
 @app.post("/api/pipeline/run")

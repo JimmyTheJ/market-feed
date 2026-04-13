@@ -125,6 +125,12 @@
             font-family: 'SF Mono', Monaco, monospace;
         }
 
+        .position-detail {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+
         .position-actions {
             display: flex;
             gap: 8px;
@@ -174,7 +180,7 @@
             flex-wrap: wrap;
         }
 
-        .add-form input {
+        .add-form input, .add-form select {
             flex: 1;
             min-width: 80px;
             padding: 8px 12px;
@@ -186,7 +192,7 @@
             font-family: 'SF Mono', Monaco, monospace;
         }
 
-        .add-form input:focus {
+        .add-form input:focus, .add-form select:focus {
             outline: none;
             border-color: var(--accent);
         }
@@ -391,36 +397,34 @@
         }
         .logout-btn:hover { border-color: var(--red); color: var(--red); }
 
-        /* ── Mode Toggle ─────────────────────────────────────────── */
-        .mode-toggle {
+        /* ── Currency Selector ──────────────────────────────────────── */
+        .currency-selector {
             display: flex;
             align-items: center;
             gap: 5px;
-            padding: 4px 10px;
-            border-radius: 12px;
-            border: 1px solid var(--border);
             font-size: 12px;
-            cursor: pointer;
             color: var(--text-muted);
-            user-select: none;
-            transition: all 0.15s ease;
-            white-space: nowrap;
         }
-        .mode-toggle:hover { border-color: var(--accent); color: var(--text); }
-        .mode-toggle.active {
-            border-color: var(--accent);
+        .currency-selector select {
+            padding: 4px 8px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--bg);
             color: var(--accent);
-            background: rgba(88, 166, 255, 0.1);
+            font-size: 12px;
+            font-family: 'SF Mono', Monaco, monospace;
+            cursor: pointer;
         }
+        .currency-selector select:focus { outline: none; border-color: var(--accent); }
 
         /* ── Inline Edit ─────────────────────────────────────────── */
-        .edit-weight-wrap {
+        .edit-shares-wrap {
             display: flex;
             align-items: center;
             gap: 3px;
         }
-        .edit-weight-input {
-            width: 68px;
+        .edit-shares-input {
+            width: 80px;
             padding: 2px 6px;
             border: 1px solid var(--accent);
             border-radius: 4px;
@@ -430,8 +434,8 @@
             font-family: 'SF Mono', Monaco, monospace;
             text-align: right;
         }
-        .edit-weight-input:focus { outline: none; }
-        .pct-label {
+        .edit-shares-input:focus { outline: none; }
+        .unit-label {
             font-size: 12px;
             color: var(--text-muted);
             font-family: 'SF Mono', Monaco, monospace;
@@ -485,9 +489,9 @@
             <div class="card">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
                     <h2 style="margin-bottom:0">Portfolio Positions</h2>
-                    <div class="mode-toggle" id="mode-toggle" onclick="toggleMode()"
-                         title="Rebalance mode: adding/editing/removing a position rescales the rest to keep the total at 100%">
-                        ⚖ Rebalance
+                    <div class="currency-selector">
+                        <span>View in</span>
+                        <select id="display-currency" onchange="onDisplayCurrencyChange()"></select>
                     </div>
                 </div>
                 <div class="weight-bar" id="weight-bar"></div>
@@ -502,11 +506,9 @@
                 <div class="add-form" id="add-form">
                     <input type="text" id="new-ticker" placeholder="TICKER" maxlength="10"
                            style="flex: 1; text-transform: uppercase;">
-                    <div style="display:flex;align-items:center;gap:4px;flex:1;min-width:100px">
-                        <input type="number" id="new-weight" placeholder="9.5"
-                               step="0.01" min="0.01" max="100" style="flex:1">
-                        <span class="pct-label">%</span>
-                    </div>
+                    <input type="number" id="new-shares" placeholder="Shares"
+                           step="0.01" min="0.01" style="flex:1;min-width:80px">
+                    <select id="new-currency" style="flex:0.6;min-width:70px"></select>
                     <button class="btn btn-primary" onclick="addPosition()">Add</button>
                 </div>
             </div>
@@ -700,66 +702,64 @@
             setTimeout(() => t.className = 'toast', 2500);
         }
 
-        // ── Mode Toggle ─────────────────────────────────────────────────
+        // ── State ───────────────────────────────────────────────────────
 
-        let rebalanceMode = false;
-        let currentPositions = []; // cached [{ticker, weight}] in decimal
+        let currentPositions = [];  // [{ticker, shares, currency, price, weight, display_value, native_value}]
+        let displayCurrency = 'USD';
+        let currencies = ['USD', 'CAD', 'BTC'];
+        let totalValue = 0;
 
-        function toggleMode() {
-            rebalanceMode = !rebalanceMode;
-            const el = document.getElementById('mode-toggle');
-            el.classList.toggle('active', rebalanceMode);
-            el.innerHTML = rebalanceMode ? '⚖ Rebalance ✓' : '⚖ Rebalance';
+        // ── Currency Selectors ──────────────────────────────────────────
+
+        function populateCurrencyDropdowns() {
+            const displaySel = document.getElementById('display-currency');
+            const addSel = document.getElementById('new-currency');
+
+            displaySel.innerHTML = currencies.map(c =>
+                `<option value="${c}" ${c === displayCurrency ? 'selected' : ''}>${c}</option>`
+            ).join('');
+
+            addSel.innerHTML = currencies.map(c =>
+                `<option value="${c}">${c}</option>`
+            ).join('');
         }
 
-        // ── Rebalance Helpers ────────────────────────────────────────────
-
-        function rebalanceForAdd(positions, newTicker, newWeight) {
-            // Scale all existing positions down to make room for newWeight
-            const scale = 1 - newWeight;
-            const scaled = positions.map(p => ({ ticker: p.ticker, weight: p.weight * scale }));
-            scaled.push({ ticker: newTicker, weight: newWeight });
-            return scaled;
-        }
-
-        function rebalanceForEdit(positions, ticker, newWeight) {
-            const old = positions.find(p => p.ticker === ticker);
-            if (!old) return positions;
-            const delta = newWeight - old.weight;
-            const others = positions.filter(p => p.ticker !== ticker);
-            const otherSum = others.reduce((s, p) => s + p.weight, 0);
-            if (otherSum === 0) return [{ ticker, weight: newWeight }];
-            return positions.map(p => {
-                if (p.ticker === ticker) return { ticker: p.ticker, weight: newWeight };
-                return { ticker: p.ticker, weight: Math.max(0, p.weight - delta * (p.weight / otherSum)) };
-            });
-        }
-
-        function rebalanceForDelete(positions, ticker) {
-            const removed = positions.find(p => p.ticker === ticker);
-            const others = positions.filter(p => p.ticker !== ticker);
-            if (!removed || others.length === 0) return others;
-            const otherSum = others.reduce((s, p) => s + p.weight, 0);
-            if (otherSum === 0) return others;
-            return others.map(p => ({
-                ticker: p.ticker,
-                weight: p.weight + removed.weight * (p.weight / otherSum)
-            }));
-        }
-
-        function roundWeight(w) {
-            return Math.round(w * 100000) / 100000;
+        function onDisplayCurrencyChange() {
+            displayCurrency = document.getElementById('display-currency').value;
+            loadPositions();
         }
 
         // ── Positions ───────────────────────────────────────────────────
 
+        function formatValue(val, currency) {
+            if (val == null) return '—';
+            if (currency === 'BTC') return val < 0.01 ? val.toFixed(6) : val.toFixed(4);
+            return val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        function currencySymbol(c) {
+            if (c === 'USD') return '$';
+            if (c === 'CAD') return 'C$';
+            if (c === 'BTC') return '₿';
+            return c + ' ';
+        }
+
         async function loadPositions() {
             try {
-                const res = await apiFetch(API + '/api/positions');
+                const res = await apiFetch(API + '/api/positions?display_currency=' + displayCurrency);
                 const data = await res.json();
+                currencies = data.currencies || ['USD', 'CAD', 'BTC'];
+                totalValue = data.total_value || 0;
                 currentPositions = (data.positions || []).map(p => ({
-                    ticker: p.ticker, weight: p.weight
+                    ticker: p.ticker,
+                    shares: p.shares,
+                    currency: p.currency,
+                    price: p.price,
+                    weight: p.weight,
+                    display_value: p.display_value,
+                    native_value: p.native_value,
                 }));
+                populateCurrencyDropdowns();
                 renderPositions(data);
             } catch (e) {
                 document.getElementById('positions-list').innerHTML =
@@ -771,49 +771,59 @@
             const list = document.getElementById('positions-list');
             const bar = document.getElementById('weight-bar');
             const sum = document.getElementById('weight-sum');
+            const positions = data.positions || [];
 
-            if (!data.positions || data.positions.length === 0) {
+            if (positions.length === 0) {
                 list.innerHTML = '<li style="color:var(--text-muted);padding:20px 0;text-align:center">No positions configured</li>';
                 bar.innerHTML = '';
                 sum.textContent = '';
                 return;
             }
 
-            bar.innerHTML = data.positions.map((p, i) =>
-                `<div class="weight-segment" style="width:${p.weight * 100}%;background:${COLORS[i % COLORS.length]}" title="${p.ticker}: ${(p.weight * 100).toFixed(2)}%"></div>`
-            ).join('');
+            bar.innerHTML = positions.map((p, i) => {
+                const w = (p.weight || 0) * 100;
+                return `<div class="weight-segment" style="width:${w}%;background:${COLORS[i % COLORS.length]}" title="${p.ticker}: ${w.toFixed(2)}%"></div>`;
+            }).join('');
 
-            list.innerHTML = data.positions.map((p, i) => `
+            const sym = currencySymbol(displayCurrency);
+            list.innerHTML = positions.map((p, i) => {
+                const pct = p.weight != null ? (p.weight * 100).toFixed(2) + '%' : '—';
+                const priceStr = p.price != null ? formatValue(p.price, p.currency) : '—';
+                const valStr = p.display_value != null ? sym + formatValue(p.display_value, displayCurrency) : '—';
+                return `
                 <li class="position-item" id="row-${p.ticker}">
                     <div class="position-info">
                         <span style="width:8px;height:8px;border-radius:50%;background:${COLORS[i % COLORS.length]};flex-shrink:0"></span>
                         <span class="ticker">${p.ticker}</span>
-                        <span class="weight-badge" id="badge-${p.ticker}">${(p.weight * 100).toFixed(2)}%</span>
+                        <span class="weight-badge" id="badge-${p.ticker}">${pct}</span>
                     </div>
-                    <div class="position-actions" id="actions-${p.ticker}">
-                        <button class="btn btn-small btn-edit btn-icon" onclick="startEdit('${p.ticker}')" title="Edit weight">✎</button>
-                        <button class="btn btn-small btn-danger btn-icon" onclick="deletePosition('${p.ticker}')" title="Remove">✕</button>
+                    <div style="display:flex;align-items:center;gap:12px">
+                        <div class="position-detail" id="detail-${p.ticker}">
+                            <span title="Shares">${p.shares}</span> × <span title="Price (${p.currency})">${priceStr}</span> = <span title="Value (${displayCurrency})">${valStr}</span>
+                        </div>
+                        <div class="position-actions" id="actions-${p.ticker}">
+                            <button class="btn btn-small btn-edit btn-icon" onclick="startEdit('${p.ticker}')" title="Edit shares">✎</button>
+                            <button class="btn btn-small btn-danger btn-icon" onclick="deletePosition('${p.ticker}')" title="Remove">✕</button>
+                        </div>
                     </div>
-                </li>
-            `).join('');
+                </li>`;
+            }).join('');
 
-            const ws = data.weight_sum;
-            const ok = Math.abs(ws - 1.0) <= 0.01;
-            sum.className = 'weight-sum ' + (ok ? 'ok' : 'warning');
-            sum.textContent = `Σ ${(ws * 100).toFixed(2)}%` + (data.warning ? ` ⚠ ${data.warning}` : ' ✓');
+            const tv = data.total_value || 0;
+            sum.className = 'weight-sum ok';
+            sum.textContent = `Total: ${sym}${formatValue(tv, displayCurrency)}`;
         }
 
         function startEdit(ticker) {
             const pos = currentPositions.find(p => p.ticker === ticker);
             if (!pos) return;
-            const pct = (pos.weight * 100).toFixed(2);
 
-            const badge = document.getElementById('badge-' + ticker);
-            badge.outerHTML = `
-                <div class="edit-weight-wrap" id="edit-wrap-${ticker}">
-                    <input class="edit-weight-input" id="edit-input-${ticker}"
-                           type="number" value="${pct}" step="0.01" min="0.01" max="100">
-                    <span class="pct-label">%</span>
+            const detail = document.getElementById('detail-' + ticker);
+            detail.innerHTML = `
+                <div class="edit-shares-wrap">
+                    <input class="edit-shares-input" id="edit-input-${ticker}"
+                           type="number" value="${pos.shares}" step="0.01" min="0.01">
+                    <span class="unit-label">shares</span>
                 </div>`;
 
             document.getElementById('actions-' + ticker).innerHTML = `
@@ -834,61 +844,61 @@
         function cancelEdit() {
             renderPositions({
                 positions: currentPositions,
-                weight_sum: currentPositions.reduce((s, p) => s + p.weight, 0),
-                warning: null
+                total_value: totalValue,
             });
         }
 
         async function saveEdit(ticker) {
             const input = document.getElementById('edit-input-' + ticker);
             if (!input) return;
-            const pct = parseFloat(input.value);
-            if (isNaN(pct) || pct <= 0 || pct > 100) {
-                showToast('Enter a valid percentage (0.01–100)', 'error');
+            const newShares = parseFloat(input.value);
+            if (isNaN(newShares) || newShares <= 0) {
+                showToast('Enter a valid number of shares', 'error');
                 return;
             }
-            const newWeight = roundWeight(pct / 100);
-            const newPositions = rebalanceMode
-                ? rebalanceForEdit(currentPositions, ticker, newWeight)
-                : currentPositions.map(p => p.ticker === ticker ? { ticker: p.ticker, weight: newWeight } : p);
+            const newPositions = currentPositions.map(p =>
+                p.ticker === ticker
+                    ? { ticker: p.ticker, shares: newShares, currency: p.currency }
+                    : { ticker: p.ticker, shares: p.shares, currency: p.currency }
+            );
             await saveAllPositions(newPositions, `Updated ${ticker}`);
         }
 
         async function addPosition() {
             const ticker = document.getElementById('new-ticker').value.trim().toUpperCase();
-            const pct = parseFloat(document.getElementById('new-weight').value);
+            const shares = parseFloat(document.getElementById('new-shares').value);
+            const currency = document.getElementById('new-currency').value;
 
             if (!ticker) { showToast('Enter a ticker', 'error'); return; }
-            if (isNaN(pct) || pct <= 0 || pct > 100) { showToast('Enter a percentage between 0.01 and 100', 'error'); return; }
+            if (isNaN(shares) || shares <= 0) { showToast('Enter a valid number of shares', 'error'); return; }
             if (currentPositions.find(p => p.ticker === ticker)) {
                 showToast(`${ticker} already exists`, 'error'); return;
             }
 
-            const newWeight = roundWeight(pct / 100);
-            const newPositions = (rebalanceMode && currentPositions.length > 0)
-                ? rebalanceForAdd(currentPositions, ticker, newWeight)
-                : [...currentPositions, { ticker, weight: newWeight }];
+            const newPositions = [
+                ...currentPositions.map(p => ({ ticker: p.ticker, shares: p.shares, currency: p.currency })),
+                { ticker, shares, currency },
+            ];
 
             await saveAllPositions(newPositions, `Added ${ticker}`);
             document.getElementById('new-ticker').value = '';
-            document.getElementById('new-weight').value = '';
+            document.getElementById('new-shares').value = '';
         }
 
         async function deletePosition(ticker) {
             if (!confirm(`Remove ${ticker}?`)) return;
-            const newPositions = (rebalanceMode && currentPositions.length > 1)
-                ? rebalanceForDelete(currentPositions, ticker)
-                : currentPositions.filter(p => p.ticker !== ticker);
+            const newPositions = currentPositions
+                .filter(p => p.ticker !== ticker)
+                .map(p => ({ ticker: p.ticker, shares: p.shares, currency: p.currency }));
             await saveAllPositions(newPositions, `Removed ${ticker}`);
         }
 
         async function saveAllPositions(positions, successMsg) {
             try {
-                const payload = positions.map(p => ({ ticker: p.ticker, weight: roundWeight(p.weight) }));
                 const res = await apiFetch(API + '/api/positions', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ positions: payload })
+                    body: JSON.stringify({ positions })
                 });
                 if (!res.ok) {
                     const err = await res.json();
@@ -1013,9 +1023,9 @@
 
         // Handle enter key in add form
         document.getElementById('new-ticker').addEventListener('keydown', e => {
-            if (e.key === 'Enter') document.getElementById('new-weight').focus();
+            if (e.key === 'Enter') document.getElementById('new-shares').focus();
         });
-        document.getElementById('new-weight').addEventListener('keydown', e => {
+        document.getElementById('new-shares').addEventListener('keydown', e => {
             if (e.key === 'Enter') addPosition();
         });
 

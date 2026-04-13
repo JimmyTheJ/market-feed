@@ -9,11 +9,15 @@ from typing import Optional
 from pydantic import BaseModel, Field, field_validator
 
 
+DEFAULT_CURRENCIES = ["USD", "CAD", "BTC"]
+
+
 class Position(BaseModel):
     """A single portfolio position from positions.yaml."""
 
     ticker: str
-    weight: float
+    shares: float
+    currency: str = "USD"
 
     @field_validator("ticker")
     @classmethod
@@ -22,17 +26,25 @@ class Position(BaseModel):
             raise ValueError("ticker must be non-empty")
         return v.strip().upper()
 
-    @field_validator("weight")
+    @field_validator("shares")
     @classmethod
-    def weight_is_positive(cls, v: float) -> float:
+    def shares_non_negative(cls, v: float) -> float:
         if v < 0:
-            raise ValueError("weight must be non-negative")
+            raise ValueError("shares must be non-negative")
         return float(v)
+
+    @field_validator("currency")
+    @classmethod
+    def currency_not_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("currency must be non-empty")
+        return v.strip().upper()
 
 
 class PositionsFile(BaseModel):
     """The full positions.yaml structure."""
 
+    currencies: list[str] = Field(default_factory=lambda: list(DEFAULT_CURRENCIES))
     positions: list[Position]
 
     @field_validator("positions")
@@ -44,15 +56,6 @@ class PositionsFile(BaseModel):
                 raise ValueError(f"Duplicate ticker: {p.ticker}")
             seen.add(p.ticker)
         return v
-
-    def weight_sum(self) -> float:
-        return sum(p.weight for p in self.positions)
-
-    def weight_warning(self) -> Optional[str]:
-        s = self.weight_sum()
-        if abs(s - 1.0) > 0.01:
-            return f"Weights sum to {s:.4f}, expected ~1.0"
-        return None
 
 
 class EnrichedPosition(BaseModel):
