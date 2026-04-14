@@ -36,6 +36,7 @@ from ..auth.middleware import (
 from ..config_loader import resolve_config_path
 from ..forex_service import get_rates_to
 from ..main import run_pipeline, setup_logging
+from ..market_hours import get_tickers_needing_refresh
 from ..models import DEFAULT_CURRENCIES, Position, PositionsFile
 from ..positions_loader import load_positions, save_positions
 from ..price_service import get_option_price, get_prices
@@ -296,6 +297,13 @@ async def get_positions(
     positions_path = _resolve_positions_path(profile)
     try:
         pf = load_positions(positions_path)
+
+        # Smart refresh: re-fetch stale prices during market hours
+        tickers_currencies = [(p.ticker, p.currency) for p in pf.positions]
+        stale = get_tickers_needing_refresh(tickers_currencies, profile=profile)
+        if stale:
+            get_prices(stale)  # fetches & updates cache
+
         return _build_positions_response(pf, display_currency.upper())
     except FileNotFoundError:
         return {
