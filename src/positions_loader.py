@@ -35,12 +35,24 @@ def save_positions(
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
+    positions_out = []
+    for p in positions_file.positions:
+        entry: dict = {"ticker": p.ticker, "shares": p.shares, "currency": p.currency}
+        if p.price_override is not None:
+            entry["price_override"] = p.price_override
+        if p.position_type == "option":
+            entry["position_type"] = "option"
+            entry["option_type"] = p.option_type
+            entry["option_direction"] = p.option_direction
+            if p.strike is not None:
+                entry["strike"] = p.strike
+            if p.expiration is not None:
+                entry["expiration"] = p.expiration
+        positions_out.append(entry)
+
     data: dict = {
         "currencies": positions_file.currencies,
-        "positions": [
-            {"ticker": p.ticker, "shares": p.shares, "currency": p.currency}
-            for p in positions_file.positions
-        ],
+        "positions": positions_out,
     }
 
     with open(path, "w") as f:

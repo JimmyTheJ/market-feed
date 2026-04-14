@@ -129,6 +129,12 @@ class PositionInput(BaseModel):
     ticker: str
     shares: float
     currency: str = "USD"
+    price_override: Optional[float] = None
+    position_type: str = "equity"
+    option_type: Optional[str] = None
+    option_direction: Optional[str] = None
+    strike: Optional[float] = None
+    expiration: Optional[str] = None
 
 
 class PositionUpdate(BaseModel):
@@ -164,26 +170,35 @@ def _build_positions_response(
     enriched = []
     total_value = 0.0
     for p in pf.positions:
-        price = prices.get(p.ticker)
+        live_price = prices.get(p.ticker)
+        # Use override price when set, otherwise fall back to live price
+        effective_price = p.price_override if p.price_override is not None else live_price
         fx_rate = forex.get(p.currency, 1.0)
-        native_value = (p.shares * price) if price is not None else None
+        native_value = (p.shares * effective_price) if effective_price is not None else None
         display_value = (native_value * fx_rate) if native_value is not None else None
         if display_value is not None:
-            total_value += display_value
-        enriched.append(
-            {
-                "ticker": p.ticker,
-                "shares": p.shares,
-                "currency": p.currency,
-                "price": round(price, 4) if price is not None else None,
-                "native_value": round(native_value, 2) if native_value is not None else None,
-                "display_value": round(display_value, 2) if display_value is not None else None,
-            }
-        )
+            total_value += abs(display_value)
+
+        item: dict = {
+            "ticker": p.ticker,
+            "shares": p.shares,
+            "currency": p.currency,
+            "price": round(effective_price, 4) if effective_price is not None else None,
+            "price_override": p.price_override,
+            "native_value": round(native_value, 2) if native_value is not None else None,
+            "display_value": round(display_value, 2) if display_value is not None else None,
+            "position_type": p.position_type,
+        }
+        if p.position_type == "option":
+            item["option_type"] = p.option_type
+            item["option_direction"] = p.option_direction
+            item["strike"] = p.strike
+            item["expiration"] = p.expiration
+        enriched.append(item)
 
     for item in enriched:
         if total_value > 0 and item["display_value"] is not None:
-            item["weight"] = round(item["display_value"] / total_value, 6)
+            item["weight"] = round(abs(item["display_value"]) / total_value, 6)
         else:
             item["weight"] = None
 
@@ -294,7 +309,17 @@ async def update_positions(
     positions_path = _resolve_positions_path(profile)
     try:
         positions = [
-            Position(ticker=p.ticker, shares=p.shares, currency=p.currency)
+            Position(
+                ticker=p.ticker,
+                shares=p.shares,
+                currency=p.currency,
+                price_override=p.price_override,
+                position_type=p.position_type,
+                option_type=p.option_type,
+                option_direction=p.option_direction,
+                strike=p.strike,
+                expiration=p.expiration,
+            )
             for p in update.positions
         ]
         try:
@@ -324,13 +349,24 @@ async def add_position(
         pf = PositionsFile(positions=[])
 
     for p in pf.positions:
-        if p.ticker.upper() == position.ticker.upper():
-            raise HTTPException(
-                status_code=400, detail=f"Ticker {position.ticker} already exists"
-            )
+        if p.position_type == "equity" and position.position_type == "equity":
+            if p.ticker.upper() == position.ticker.upper():
+                raise HTTPException(
+                    status_code=400, detail=f"Ticker {position.ticker} already exists"
+                )
 
     pf.positions.append(
-        Position(ticker=position.ticker, shares=position.shares, currency=position.currency)
+        Position(
+            ticker=position.ticker,
+            shares=position.shares,
+            currency=position.currency,
+            price_override=position.price_override,
+            position_type=position.position_type,
+            option_type=position.option_type,
+            option_direction=position.option_direction,
+            strike=position.strike,
+            expiration=position.expiration,
+        )
     )
     save_positions(pf, positions_path)
 
@@ -341,9 +377,10 @@ async def add_position(
 async def delete_position(
     ticker: str,
     profile: str | None = None,
+    index: int | None = None,
     user: dict = Depends(require_auth),
 ):
-    """Remove a position by ticker."""
+    """Remove a position by ticker (and optional index for options)."""
     positions_path = _resolve_positions_path(profile)
     try:
         pf = load_positions(positions_path)
@@ -351,12 +388,25 @@ async def delete_position(
         raise HTTPException(status_code=404, detail="No positions file")
 
     ticker_upper = ticker.upper()
-    original_count = len(pf.positions)
-    pf.positions = [p for p in pf.positions if p.ticker != ticker_upper]
 
-    if len(pf.positions) == original_count:
+    if index is not None and 0 <= index < len(pf.positions):
+        # Delete by index (for options with same ticker)
+        if pf.positions[index].ticker == ticker_upper:
+            pf.positions.pop(index)
+            save_positions(pf, positions_path)
+            return {"status": "deleted", "ticker": ticker_upper}
+
+    # Fall back to first match by ticker
+    found_idx = None
+    for i, p in enumerate(pf.positions):
+        if p.ticker == ticker_upper:
+            found_idx = i
+            break
+
+    if found_idx is None:
         raise HTTPException(status_code=404, detail=f"Ticker {ticker} not found")
 
+    pf.positions.pop(found_idx)
     save_positions(pf, positions_path)
     return {"status": "deleted", "ticker": ticker_upper}
 

@@ -13,11 +13,24 @@ DEFAULT_CURRENCIES = ["USD", "CAD", "BTC"]
 
 
 class Position(BaseModel):
-    """A single portfolio position from positions.yaml."""
+    """A single portfolio position from positions.yaml.
+
+    Supports equities and options. Options have additional fields for type
+    (CALL/PUT), direction (LONG/SHORT), strike price, and expiration date.
+    Short options are stored with negative shares.
+    A price_override can be set to manually specify cost per share when
+    live price lookup is unavailable or undesired.
+    """
 
     ticker: str
     shares: float
     currency: str = "USD"
+    price_override: Optional[float] = None
+    position_type: str = "equity"  # "equity" or "option"
+    option_type: Optional[str] = None  # "CALL" or "PUT"
+    option_direction: Optional[str] = None  # "LONG" or "SHORT"
+    strike: Optional[float] = None
+    expiration: Optional[str] = None  # ISO date string, e.g. "2026-06-20"
 
     @field_validator("ticker")
     @classmethod
@@ -28,9 +41,9 @@ class Position(BaseModel):
 
     @field_validator("shares")
     @classmethod
-    def shares_non_negative(cls, v: float) -> float:
-        if v < 0:
-            raise ValueError("shares must be non-negative")
+    def shares_valid(cls, v: float) -> float:
+        if v == 0:
+            raise ValueError("shares must be non-zero")
         return float(v)
 
     @field_validator("currency")
@@ -39,6 +52,41 @@ class Position(BaseModel):
         if not v or not v.strip():
             raise ValueError("currency must be non-empty")
         return v.strip().upper()
+
+    @field_validator("position_type")
+    @classmethod
+    def valid_position_type(cls, v: str) -> str:
+        v = v.lower().strip()
+        if v not in ("equity", "option"):
+            raise ValueError("position_type must be 'equity' or 'option'")
+        return v
+
+    @field_validator("option_type")
+    @classmethod
+    def valid_option_type(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.upper().strip()
+        if v not in ("CALL", "PUT"):
+            raise ValueError("option_type must be 'CALL' or 'PUT'")
+        return v
+
+    @field_validator("option_direction")
+    @classmethod
+    def valid_option_direction(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.upper().strip()
+        if v not in ("LONG", "SHORT"):
+            raise ValueError("option_direction must be 'LONG' or 'SHORT'")
+        return v
+
+    @field_validator("price_override")
+    @classmethod
+    def price_override_positive(cls, v: float | None) -> float | None:
+        if v is not None and v < 0:
+            raise ValueError("price_override must be non-negative")
+        return v
 
 
 class PositionsFile(BaseModel):
@@ -49,12 +97,21 @@ class PositionsFile(BaseModel):
 
     @field_validator("positions")
     @classmethod
-    def no_duplicate_tickers(cls, v: list[Position]) -> list[Position]:
-        seen: set[str] = set()
+    def no_duplicate_positions(cls, v: list[Position]) -> list[Position]:
+        """Ensure no exact duplicate positions.
+
+        For equities, duplicate means same ticker.
+        For options, duplicate means same ticker + option_type + strike + expiration.
+        """
+        seen: set[tuple] = set()
         for p in v:
-            if p.ticker in seen:
-                raise ValueError(f"Duplicate ticker: {p.ticker}")
-            seen.add(p.ticker)
+            if p.position_type == "option":
+                key = (p.ticker, p.option_type, p.strike, p.expiration)
+            else:
+                key = (p.ticker, "equity", None, None)
+            if key in seen:
+                raise ValueError(f"Duplicate position: {p.ticker}")
+            seen.add(key)
         return v
 
 

@@ -113,9 +113,12 @@ def run_pipeline(
     total_value = 0.0
     position_values: list[float] = []
     for p in positions_file.positions:
-        price = prices.get(p.ticker)
+        if p.price_override is not None:
+            price = p.price_override
+        else:
+            price = prices.get(p.ticker)
         fx = forex.get(p.currency, 1.0)
-        val = (p.shares * price * fx) if price is not None else 0.0
+        val = (abs(p.shares) * price * fx) if price is not None else 0.0
         position_values.append(val)
         total_value += val
 

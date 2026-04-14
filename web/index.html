@@ -445,6 +445,102 @@
         .btn-confirm { color: var(--green); }
         .btn-confirm:hover { border-color: var(--green); }
 
+        /* ── Add Form Tabs ─────────────────────────────────────────── */
+        .add-tabs {
+            display: flex;
+            gap: 0;
+            margin-bottom: 12px;
+        }
+        .add-tab {
+            padding: 6px 16px;
+            font-size: 13px;
+            cursor: pointer;
+            color: var(--text-muted);
+            border: 1px solid var(--border);
+            background: transparent;
+            transition: all 0.15s ease;
+        }
+        .add-tab:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+        .add-tab:last-child { border-radius: 0 var(--radius) var(--radius) 0; border-left: none; }
+        .add-tab.active { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+        .add-tab-content { display: none; }
+        .add-tab-content.active { display: block; }
+
+        /* ── Radio Groups ──────────────────────────────────────────── */
+        .radio-group {
+            display: flex;
+            gap: 0;
+            margin-bottom: 8px;
+        }
+        .radio-group label {
+            padding: 5px 14px;
+            font-size: 12px;
+            cursor: pointer;
+            color: var(--text-muted);
+            border: 1px solid var(--border);
+            background: transparent;
+            transition: all 0.15s ease;
+        }
+        .radio-group label:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+        .radio-group label:last-child { border-radius: 0 var(--radius) var(--radius) 0; border-left: none; }
+        .radio-group input[type="radio"] { display: none; }
+        .radio-group input[type="radio"]:checked + span {
+            /* handled via JS toggling .active on label */
+        }
+        .radio-group label.active {
+            background: var(--accent);
+            color: var(--bg);
+            border-color: var(--accent);
+            font-weight: 600;
+        }
+
+        /* ── Override Checkbox ─────────────────────────────────────── */
+        .override-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 4px;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+        .override-row input[type="checkbox"] {
+            accent-color: var(--accent);
+        }
+        .override-row input[type="number"] {
+            width: 100px;
+            padding: 4px 8px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--bg);
+            color: var(--text);
+            font-size: 13px;
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+        .override-row input[type="number"]:focus { outline: none; border-color: var(--accent); }
+
+        /* ── Override indicator on position items ──────────────────── */
+        .override-badge {
+            font-size: 10px;
+            color: var(--yellow);
+            opacity: 0.7;
+            margin-left: 4px;
+            cursor: help;
+        }
+        .option-badge {
+            font-size: 10px;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-family: 'SF Mono', Monaco, monospace;
+            font-weight: 600;
+        }
+        .option-badge.call { background: rgba(63,185,80,0.15); color: var(--green); }
+        .option-badge.put { background: rgba(248,81,73,0.15); color: var(--red); }
+        .option-meta {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+
         /* ── Profile Selector ─────────────────────────────────────── */
         .profile-overlay {
             position: fixed;
@@ -657,6 +753,10 @@
 
             <div class="card">
                 <h2>Add Position</h2>
+                <div class="add-tabs">
+                    <button class="add-tab active" onclick="switchAddTab('equity')">Equity</button>
+                    <button class="add-tab" onclick="switchAddTab('option')">Option</button>
+                </div>
                 <div class="add-form" id="add-form">
                     <input type="text" id="new-ticker" placeholder="TICKER" maxlength="10"
                            style="flex: 1; text-transform: uppercase;">
@@ -664,6 +764,35 @@
                            step="0.01" min="0.01" style="flex:1;min-width:80px">
                     <select id="new-currency" style="flex:0.6;min-width:70px"></select>
                     <button class="btn btn-primary" onclick="addPosition()">Add</button>
+                </div>
+                <!-- Option-specific fields -->
+                <div id="option-fields" style="display:none; margin-top:8px;">
+                    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+                        <div>
+                            <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px;">Type</div>
+                            <div class="radio-group" id="rg-option-type">
+                                <label class="active" onclick="radioSelect(this)"><input type="radio" name="option-type" value="CALL" checked><span>CALL</span></label>
+                                <label onclick="radioSelect(this)"><input type="radio" name="option-type" value="PUT"><span>PUT</span></label>
+                            </div>
+                        </div>
+                        <div>
+                            <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px;">Direction</div>
+                            <div class="radio-group" id="rg-option-dir">
+                                <label class="active" onclick="radioSelect(this)"><input type="radio" name="option-dir" value="LONG" checked><span>LONG</span></label>
+                                <label onclick="radioSelect(this)"><input type="radio" name="option-dir" value="SHORT"><span>SHORT</span></label>
+                            </div>
+                        </div>
+                        <input type="number" id="new-strike" placeholder="Strike" step="0.01" min="0.01"
+                               style="width:100px;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px;">
+                        <input type="date" id="new-expiration"
+                               style="width:140px;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px;">
+                    </div>
+                </div>
+                <!-- Price override -->
+                <div class="override-row" style="margin-top:8px;">
+                    <input type="checkbox" id="new-override-check" onchange="document.getElementById('new-override-price').style.display=this.checked?'inline-block':'none'">
+                    <span>Price override</span>
+                    <input type="number" id="new-override-price" placeholder="$/share" step="0.01" min="0.01" style="display:none">
                 </div>
             </div>
         </div>
@@ -1042,6 +1171,31 @@
             return c + ' ';
         }
 
+        let currentAddTab = 'equity';
+
+        function switchAddTab(tab) {
+            currentAddTab = tab;
+            document.querySelectorAll('.add-tab').forEach(t => t.classList.toggle('active', t.textContent.toLowerCase() === tab));
+            document.getElementById('option-fields').style.display = tab === 'option' ? 'block' : 'none';
+        }
+
+        function radioSelect(label) {
+            label.parentElement.querySelectorAll('label').forEach(l => l.classList.remove('active'));
+            label.classList.add('active');
+            label.querySelector('input').checked = true;
+        }
+
+        function positionToPayload(p) {
+            const obj = { ticker: p.ticker, shares: p.shares, currency: p.currency, price_override: p.price_override || null, position_type: p.position_type || 'equity' };
+            if (p.position_type === 'option') {
+                obj.option_type = p.option_type;
+                obj.option_direction = p.option_direction;
+                obj.strike = p.strike;
+                obj.expiration = p.expiration;
+            }
+            return obj;
+        }
+
         async function loadPositions() {
             try {
                 const res = await apiFetch(apiUrl('/api/positions', 'display_currency=' + displayCurrency));
@@ -1056,6 +1210,12 @@
                     weight: p.weight,
                     display_value: p.display_value,
                     native_value: p.native_value,
+                    price_override: p.price_override,
+                    position_type: p.position_type || 'equity',
+                    option_type: p.option_type,
+                    option_direction: p.option_direction,
+                    strike: p.strike,
+                    expiration: p.expiration,
                 }));
                 populateCurrencyDropdowns();
                 renderPositions(data);
@@ -1088,21 +1248,34 @@
                 const pct = p.weight != null ? (p.weight * 100).toFixed(2) + '%' : '—';
                 const priceStr = p.price != null ? formatValue(p.price, p.currency) : '—';
                 const valStr = p.display_value != null ? sym + formatValue(p.display_value, displayCurrency) : '—';
+                const overrideMark = p.price_override != null ? '<span class="override-badge" title="Price override active">⚑</span>' : '';
+                let optionInfo = '';
+                if (p.position_type === 'option') {
+                    const cls = (p.option_type || 'call').toLowerCase();
+                    const dir = (p.option_direction || 'LONG');
+                    const strikeStr = p.strike != null ? '$' + p.strike : '';
+                    const expStr = p.expiration || '';
+                    optionInfo = `<span class="option-badge ${cls}">${dir} ${p.option_type || ''}</span> <span class="option-meta">${strikeStr} ${expStr}</span>`;
+                }
+                const displayShares = p.shares;
                 return `
-                <li class="position-item" id="row-${p.ticker}">
+                <li class="position-item" id="row-${p.ticker}-${i}">
                     <div class="position-info">
                         <span style="width:8px;height:8px;border-radius:50%;background:${COLORS[i % COLORS.length]};flex-shrink:0"></span>
-                        <span class="ticker">${p.ticker}</span>
-                        <span class="weight-badge" id="badge-${p.ticker}">${pct}</span>
+                        <span class="ticker">${p.ticker}${overrideMark}</span>
+                        ${optionInfo}
+                        <span class="weight-badge" id="badge-${p.ticker}-${i}">${pct}</span>
                     </div>
                     <div style="display:flex;align-items:center;gap:12px">
-                        <div class="position-detail" id="detail-${p.ticker}">
-                            <span title="Shares">${p.shares}</span> × <span title="Price (${p.currency})">${priceStr}</span> = <span title="Value (${displayCurrency})">${valStr}</span>
+                        <div class="position-detail" id="detail-${i}">
+                            <span title="Shares">${displayShares}</span> × <span title="Price (${p.currency})">${priceStr}</span> = <span title="Value (${displayCurrency})">${valStr}</span>
                         </div>
-                        <div class="position-actions" id="actions-${p.ticker}">
-                            <button class="btn btn-small btn-edit btn-icon" onclick="startEdit('${p.ticker}')" title="Edit shares">✎</button>
-                            <button class="btn btn-small btn-danger btn-icon" onclick="deletePosition('${p.ticker}')" title="Remove">✕</button>
+                        <div class="position-actions" id="actions-${i}">
+                            <button class="btn btn-small btn-edit btn-icon" onclick="startEdit(${i})" title="Edit">✎</button>
+                            <button class="btn btn-small btn-danger btn-icon" onclick="deletePosition(${i})" title="Remove">✕</button>
                         </div>
+                    </div>
+                </li>`;
                     </div>
                 </li>`;
             }).join('');
@@ -1112,28 +1285,38 @@
             sum.textContent = `Total: ${sym}${formatValue(tv, displayCurrency)}`;
         }
 
-        function startEdit(ticker) {
-            const pos = currentPositions.find(p => p.ticker === ticker);
+        function startEdit(idx) {
+            const pos = currentPositions[idx];
             if (!pos) return;
 
-            const detail = document.getElementById('detail-' + ticker);
+            const detail = document.getElementById('detail-' + idx);
+            const overrideVal = pos.price_override != null ? pos.price_override : '';
+            const overrideChecked = pos.price_override != null ? 'checked' : '';
+            const overrideDisplay = pos.price_override != null ? 'inline-block' : 'none';
             detail.innerHTML = `
                 <div class="edit-shares-wrap">
-                    <input class="edit-shares-input" id="edit-input-${ticker}"
-                           type="number" value="${pos.shares}" step="0.01" min="0.01">
+                    <input class="edit-shares-input" id="edit-input-${idx}"
+                           type="number" value="${pos.shares}" step="0.01">
                     <span class="unit-label">shares</span>
+                </div>
+                <div class="override-row" style="margin-left:8px">
+                    <input type="checkbox" id="edit-override-check-${idx}" ${overrideChecked}
+                           onchange="document.getElementById('edit-override-price-${idx}').style.display=this.checked?'inline-block':'none'">
+                    <span>Override</span>
+                    <input type="number" id="edit-override-price-${idx}" value="${overrideVal}"
+                           placeholder="$/share" step="0.01" min="0.01" style="display:${overrideDisplay};width:80px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:12px;">
                 </div>`;
 
-            document.getElementById('actions-' + ticker).innerHTML = `
-                <button class="btn btn-small btn-confirm btn-icon" onclick="saveEdit('${ticker}')" title="Save">✓</button>
+            document.getElementById('actions-' + idx).innerHTML = `
+                <button class="btn btn-small btn-confirm btn-icon" onclick="saveEdit(${idx})" title="Save">✓</button>
                 <button class="btn btn-small btn-danger btn-icon" onclick="cancelEdit()" title="Cancel">✕</button>`;
 
-            const input = document.getElementById('edit-input-' + ticker);
+            const input = document.getElementById('edit-input-' + idx);
             if (input) {
                 input.focus();
                 input.select();
                 input.addEventListener('keydown', e => {
-                    if (e.key === 'Enter') saveEdit(ticker);
+                    if (e.key === 'Enter') saveEdit(idx);
                     if (e.key === 'Escape') cancelEdit();
                 });
             }
@@ -1146,49 +1329,112 @@
             });
         }
 
-        async function saveEdit(ticker) {
-            const input = document.getElementById('edit-input-' + ticker);
+        async function saveEdit(idx) {
+            const input = document.getElementById('edit-input-' + idx);
             if (!input) return;
             const newShares = parseFloat(input.value);
-            if (isNaN(newShares) || newShares <= 0) {
+            if (isNaN(newShares) || newShares === 0) {
                 showToast('Enter a valid number of shares', 'error');
                 return;
             }
-            const newPositions = currentPositions.map(p =>
-                p.ticker === ticker
-                    ? { ticker: p.ticker, shares: newShares, currency: p.currency }
-                    : { ticker: p.ticker, shares: p.shares, currency: p.currency }
-            );
-            await saveAllPositions(newPositions, `Updated ${ticker}`);
+            const overrideCheck = document.getElementById('edit-override-check-' + idx);
+            const overridePrice = document.getElementById('edit-override-price-' + idx);
+            let priceOverride = null;
+            if (overrideCheck && overrideCheck.checked && overridePrice) {
+                priceOverride = parseFloat(overridePrice.value);
+                if (isNaN(priceOverride) || priceOverride <= 0) {
+                    showToast('Enter a valid override price', 'error');
+                    return;
+                }
+            }
+            const newPositions = currentPositions.map((p, i) => {
+                const base = positionToPayload(p);
+                if (i === idx) {
+                    base.shares = newShares;
+                    base.price_override = priceOverride;
+                }
+                return base;
+            });
+            await saveAllPositions(newPositions, `Updated ${currentPositions[idx].ticker}`);
         }
 
         async function addPosition() {
             const ticker = document.getElementById('new-ticker').value.trim().toUpperCase();
             const shares = parseFloat(document.getElementById('new-shares').value);
             const currency = document.getElementById('new-currency').value;
+            const isOption = currentAddTab === 'option';
 
             if (!ticker) { showToast('Enter a ticker', 'error'); return; }
             if (isNaN(shares) || shares <= 0) { showToast('Enter a valid number of shares', 'error'); return; }
-            if (currentPositions.find(p => p.ticker === ticker)) {
-                showToast(`${ticker} already exists`, 'error'); return;
+
+            let priceOverride = null;
+            const overrideCheck = document.getElementById('new-override-check');
+            const overrideInput = document.getElementById('new-override-price');
+            if (overrideCheck.checked) {
+                priceOverride = parseFloat(overrideInput.value);
+                if (isNaN(priceOverride) || priceOverride <= 0) {
+                    showToast('Enter a valid override price', 'error');
+                    return;
+                }
+            }
+
+            const newPos = { ticker, shares, currency, price_override: priceOverride, position_type: isOption ? 'option' : 'equity' };
+
+            if (isOption) {
+                const optType = document.querySelector('#rg-option-type label.active input')?.value || 'CALL';
+                const optDir = document.querySelector('#rg-option-dir label.active input')?.value || 'LONG';
+                const strike = parseFloat(document.getElementById('new-strike').value);
+                const expiration = document.getElementById('new-expiration').value;
+
+                if (isNaN(strike) || strike <= 0) { showToast('Enter a valid strike price', 'error'); return; }
+                if (!expiration) { showToast('Select an expiration date', 'error'); return; }
+
+                newPos.option_type = optType;
+                newPos.option_direction = optDir;
+                newPos.strike = strike;
+                newPos.expiration = expiration;
+
+                // SHORT direction → negate shares
+                if (optDir === 'SHORT') {
+                    newPos.shares = -Math.abs(newPos.shares);
+                }
+            } else {
+                // Equity duplicate check
+                if (currentPositions.find(p => p.ticker === ticker && p.position_type !== 'option')) {
+                    showToast(`${ticker} already exists`, 'error'); return;
+                }
             }
 
             const newPositions = [
-                ...currentPositions.map(p => ({ ticker: p.ticker, shares: p.shares, currency: p.currency })),
-                { ticker, shares, currency },
+                ...currentPositions.map(p => positionToPayload(p)),
+                newPos,
             ];
 
             await saveAllPositions(newPositions, `Added ${ticker}`);
             document.getElementById('new-ticker').value = '';
             document.getElementById('new-shares').value = '';
+            if (overrideCheck.checked) {
+                overrideCheck.checked = false;
+                overrideInput.style.display = 'none';
+                overrideInput.value = '';
+            }
+            if (isOption) {
+                document.getElementById('new-strike').value = '';
+                document.getElementById('new-expiration').value = '';
+            }
         }
 
-        async function deletePosition(ticker) {
-            if (!confirm(`Remove ${ticker}?`)) return;
+        async function deletePosition(idx) {
+            const pos = currentPositions[idx];
+            if (!pos) return;
+            const label = pos.position_type === 'option'
+                ? `${pos.ticker} ${pos.option_type} ${pos.strike} ${pos.expiration}`
+                : pos.ticker;
+            if (!confirm(`Remove ${label}?`)) return;
             const newPositions = currentPositions
-                .filter(p => p.ticker !== ticker)
-                .map(p => ({ ticker: p.ticker, shares: p.shares, currency: p.currency }));
-            await saveAllPositions(newPositions, `Removed ${ticker}`);
+                .filter((_, i) => i !== idx)
+                .map(p => positionToPayload(p));
+            await saveAllPositions(newPositions, `Removed ${label}`);
         }
 
         async function saveAllPositions(positions, successMsg) {
