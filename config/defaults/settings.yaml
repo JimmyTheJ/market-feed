@@ -46,3 +46,41 @@ logging:
 alerts:
   high_relevance_threshold: 25.0
   position_concentration_warning: 0.40
+
+# Smart price refresh - on-demand during market hours
+price_refresh:
+  # Minute offsets within each hour when prices are considered stale.
+  # E.g. [1, 31] means prices fetched before :01 or :31 are refreshed
+  # on next page load (ensures data ~1 min after market open at 9:30).
+  offsets: [1, 31]
+
+  # Named market-hour schedules. Each position maps to one schedule.
+  schedules:
+    us_equity:
+      name: "US Equity (NYSE/NASDAQ/TSX)"
+      open: "09:30"
+      close: "16:00"
+      timezone: "America/New_York"
+      days: [0, 1, 2, 3, 4]   # Mon=0 .. Sun=6
+    crypto:
+      name: "Cryptocurrency (24/7)"
+      open: "00:00"
+      close: "23:59"
+      timezone: "UTC"
+      days: [0, 1, 2, 3, 4, 5, 6]
+
+  # Schedule assigned to tickers that aren't crypto
+  default_schedule: us_equity
+
+  # Currencies treated as crypto (mapped to 'crypto' schedule automatically)
+  crypto_currencies:
+    - BTC
+    - ETH
+    - SOL
+    - DOGE
+    - XRP
+    - ADA
+    - DOT
+    - AVAX
+    - LINK
+    - MATIC
