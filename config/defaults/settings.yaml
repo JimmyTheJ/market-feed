@@ -9,7 +9,7 @@ max_total_articles: 200
 summarization:
   use_ollama: true
   ollama_base_url: http://localhost:11434
-  ollama_model: llama3.2
+  ollama_model: phi3:14
   temperature: 0.3
   max_tokens: 500
   # Fallback to extractive summaries if Ollama is unavailable

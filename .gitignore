@@ -18,6 +18,7 @@ venv/
 .mypy_cache/
 # User config overrides (defaults/ is always tracked)
 config/*.yaml
+config/profiles/
 !config/defaults/
 data/metadata/*.yaml
 !data/defaults/
