@@ -541,6 +541,63 @@
             font-family: 'SF Mono', Monaco, monospace;
         }
 
+        /* ── Ticker Autocomplete ───────────────────────────────────── */
+        .ticker-wrap {
+            position: relative;
+            flex: 1;
+        }
+        .ticker-wrap input {
+            width: 100%;
+            text-transform: uppercase;
+        }
+        .autocomplete-list {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-top: none;
+            border-radius: 0 0 var(--radius) var(--radius);
+            max-height: 220px;
+            overflow-y: auto;
+            z-index: 100;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+        }
+        .autocomplete-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13px;
+            border-bottom: 1px solid var(--border);
+        }
+        .autocomplete-item:last-child { border-bottom: none; }
+        .autocomplete-item:hover, .autocomplete-item.selected {
+            background: rgba(88,166,255,0.1);
+        }
+        .autocomplete-item .ac-symbol {
+            font-weight: 600;
+            font-family: 'SF Mono', Monaco, monospace;
+            color: var(--text);
+        }
+        .autocomplete-item .ac-name {
+            color: var(--text-muted);
+            font-size: 12px;
+            margin-left: 8px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 180px;
+        }
+        .autocomplete-item .ac-exchange {
+            font-size: 11px;
+            color: var(--text-muted);
+            opacity: 0.7;
+            flex-shrink: 0;
+        }
+
         /* ── Profile Selector ─────────────────────────────────────── */
         .profile-overlay {
             position: fixed;
@@ -758,8 +815,11 @@
                     <button class="add-tab" onclick="switchAddTab('option')">Option</button>
                 </div>
                 <div class="add-form" id="add-form">
-                    <input type="text" id="new-ticker" placeholder="TICKER" maxlength="10"
-                           style="flex: 1; text-transform: uppercase;">
+                    <div class="ticker-wrap">
+                        <input type="text" id="new-ticker" placeholder="TICKER" maxlength="20"
+                               autocomplete="off" oninput="onTickerInput(this.value)" onkeydown="onTickerKeydown(event)">
+                        <div class="autocomplete-list" id="ticker-autocomplete" style="display:none"></div>
+                    </div>
                     <input type="number" id="new-shares" placeholder="Shares"
                            step="0.01" min="0.01" style="flex:1;min-width:80px">
                     <select id="new-currency" style="flex:0.6;min-width:70px"></select>
@@ -1177,6 +1237,8 @@
             currentAddTab = tab;
             document.querySelectorAll('.add-tab').forEach(t => t.classList.toggle('active', t.textContent.toLowerCase() === tab));
             document.getElementById('option-fields').style.display = tab === 'option' ? 'block' : 'none';
+            document.getElementById('new-ticker').placeholder = tab === 'option' ? 'UNDERLYING' : 'TICKER';
+            document.getElementById('new-shares').placeholder = tab === 'option' ? 'Contracts' : 'Shares';
         }
 
         function radioSelect(label) {
@@ -1195,6 +1257,82 @@
             }
             return obj;
         }
+
+        // ── Ticker Autocomplete ─────────────────────────────────────────
+
+        let acDebounceTimer = null;
+        let acSelectedIdx = -1;
+        let acResults = [];
+
+        function onTickerInput(val) {
+            clearTimeout(acDebounceTimer);
+            const query = val.trim();
+            if (query.length < 2) {
+                hideAutocomplete();
+                return;
+            }
+            acDebounceTimer = setTimeout(() => fetchTickerSuggestions(query), 300);
+        }
+
+        async function fetchTickerSuggestions(query) {
+            try {
+                const res = await apiFetch(apiUrl('/api/ticker-search', 'q=' + encodeURIComponent(query)));
+                const data = await res.json();
+                acResults = data.results || [];
+                acSelectedIdx = -1;
+                renderAutocomplete();
+            } catch (e) {
+                hideAutocomplete();
+            }
+        }
+
+        function renderAutocomplete() {
+            const list = document.getElementById('ticker-autocomplete');
+            if (acResults.length === 0) { hideAutocomplete(); return; }
+            list.style.display = 'block';
+            list.innerHTML = acResults.map((r, i) =>
+                `<div class="autocomplete-item${i === acSelectedIdx ? ' selected' : ''}" onmousedown="selectAutocomplete(${i})">
+                    <div><span class="ac-symbol">${r.symbol}</span><span class="ac-name">${r.name}</span></div>
+                    <span class="ac-exchange">${r.exchange}</span>
+                </div>`
+            ).join('');
+        }
+
+        function selectAutocomplete(idx) {
+            if (idx >= 0 && idx < acResults.length) {
+                document.getElementById('new-ticker').value = acResults[idx].symbol;
+                hideAutocomplete();
+            }
+        }
+
+        function hideAutocomplete() {
+            acResults = [];
+            acSelectedIdx = -1;
+            document.getElementById('ticker-autocomplete').style.display = 'none';
+        }
+
+        function onTickerKeydown(e) {
+            if (acResults.length === 0) return;
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                acSelectedIdx = Math.min(acSelectedIdx + 1, acResults.length - 1);
+                renderAutocomplete();
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                acSelectedIdx = Math.max(acSelectedIdx - 1, 0);
+                renderAutocomplete();
+            } else if (e.key === 'Enter' && acSelectedIdx >= 0) {
+                e.preventDefault();
+                selectAutocomplete(acSelectedIdx);
+            } else if (e.key === 'Escape') {
+                hideAutocomplete();
+            }
+        }
+
+        // Close autocomplete when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.ticker-wrap')) hideAutocomplete();
+        });
 
         async function loadPositions() {
             try {
@@ -1258,6 +1396,11 @@
                     optionInfo = `<span class="option-badge ${cls}">${dir} ${p.option_type || ''}</span> <span class="option-meta">${strikeStr} ${expStr}</span>`;
                 }
                 const displayShares = p.shares;
+                const isOpt = p.position_type === 'option';
+                const sharesLabel = isOpt ? 'Contracts' : 'Shares';
+                const sharesDetail = isOpt
+                    ? `<span title="${sharesLabel}">${displayShares}c</span> × 100 × <span title="Price (${p.currency})">${priceStr}</span> = <span title="Value (${displayCurrency})">${valStr}</span>`
+                    : `<span title="${sharesLabel}">${displayShares}</span> × <span title="Price (${p.currency})">${priceStr}</span> = <span title="Value (${displayCurrency})">${valStr}</span>`;
                 return `
                 <li class="position-item" id="row-${p.ticker}-${i}">
                     <div class="position-info">
@@ -1268,7 +1411,7 @@
                     </div>
                     <div style="display:flex;align-items:center;gap:12px">
                         <div class="position-detail" id="detail-${i}">
-                            <span title="Shares">${displayShares}</span> × <span title="Price (${p.currency})">${priceStr}</span> = <span title="Value (${displayCurrency})">${valStr}</span>
+                            ${sharesDetail}
                         </div>
                         <div class="position-actions" id="actions-${i}">
                             <button class="btn btn-small btn-edit btn-icon" onclick="startEdit(${i})" title="Edit">✎</button>
@@ -1291,11 +1434,12 @@
             const overrideVal = pos.price_override != null ? pos.price_override : '';
             const overrideChecked = pos.price_override != null ? 'checked' : '';
             const overrideDisplay = pos.price_override != null ? 'inline-block' : 'none';
+            const unitLabel = pos.position_type === 'option' ? 'contracts' : 'shares';
             detail.innerHTML = `
                 <div class="edit-shares-wrap">
                     <input class="edit-shares-input" id="edit-input-${idx}"
                            type="number" value="${pos.shares}" step="0.01">
-                    <span class="unit-label">shares</span>
+                    <span class="unit-label">${unitLabel}</span>
                 </div>
                 <div class="override-row" style="margin-left:8px">
                     <input type="checkbox" id="edit-override-check-${idx}" ${overrideChecked}

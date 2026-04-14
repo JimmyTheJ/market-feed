@@ -174,7 +174,9 @@ def _build_positions_response(
         # Use override price when set, otherwise fall back to live price
         effective_price = p.price_override if p.price_override is not None else live_price
         fx_rate = forex.get(p.currency, 1.0)
-        native_value = (p.shares * effective_price) if effective_price is not None else None
+        # Each option contract represents 100 shares of the underlying
+        multiplier = 100 if p.position_type == "option" else 1
+        native_value = (p.shares * effective_price * multiplier) if effective_price is not None else None
         display_value = (native_value * fx_rate) if native_value is not None else None
         if display_value is not None:
             total_value += abs(display_value)
@@ -423,6 +425,48 @@ async def get_currencies(
         return {"currencies": pf.currencies}
     except FileNotFoundError:
         return {"currencies": list(DEFAULT_CURRENCIES)}
+
+
+# ── Ticker Search ───────────────────────────────────────────────────
+
+YAHOO_SEARCH_URL = "https://query2.finance.yahoo.com/v1/finance/search"
+
+
+@app.get("/api/ticker-search")
+async def ticker_search(
+    q: str = "",
+    user: dict = Depends(require_auth),
+):
+    """Search for tickers via Yahoo Finance autosuggest."""
+    query = q.strip()
+    if len(query) < 1:
+        return {"results": []}
+    try:
+        import httpx
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                YAHOO_SEARCH_URL,
+                params={"q": query, "quotesCount": 10, "newsCount": 0},
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=5.0,
+            )
+            resp.raise_for_status()
+            quotes = resp.json().get("quotes", [])
+            results = [
+                {
+                    "symbol": q_item.get("symbol", ""),
+                    "name": q_item.get("shortname") or q_item.get("longname", ""),
+                    "exchange": q_item.get("exchDisp", q_item.get("exchange", "")),
+                    "type": q_item.get("typeDisp", ""),
+                }
+                for q_item in quotes
+                if q_item.get("isYahooFinance", False)
+            ]
+            return {"results": results}
+    except Exception as e:
+        logger.warning("Ticker search failed: %s", e)
+        return {"results": []}
 
 
 # ── Profile Routes ──────────────────────────────────────────────────

@@ -118,7 +118,8 @@ def run_pipeline(
         else:
             price = prices.get(p.ticker)
         fx = forex.get(p.currency, 1.0)
-        val = (abs(p.shares) * price * fx) if price is not None else 0.0
+        multiplier = 100 if p.position_type == "option" else 1
+        val = (abs(p.shares) * price * multiplier * fx) if price is not None else 0.0
         position_values.append(val)
         total_value += val
 
