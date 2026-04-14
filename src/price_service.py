@@ -52,7 +52,7 @@ def get_prices(tickers: list[str]) -> dict[str, float | None]:
     for t in tickers:
         key = t.upper()
         entry = cache.get(key)
-        if entry and _is_fresh(entry):
+        if entry and _is_fresh(entry) and entry.get("price") is not None:
             result[key] = entry["price"]
         else:
             stale.append(key)
