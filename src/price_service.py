@@ -77,6 +77,8 @@ def _fetch_from_yfinance(tickers: list[str]) -> dict[str, float | None]:
         logger.error("yfinance is not installed – cannot fetch prices")
         return {t: None for t in tickers}
 
+    import pandas as pd
+
     prices: dict[str, float | None] = {}
     try:
         data = yf.download(
@@ -92,18 +94,23 @@ def _fetch_from_yfinance(tickers: list[str]) -> dict[str, float | None]:
             return {t: None for t in tickers}
 
         close = data["Close"]
-        if len(tickers) == 1:
-            # Single ticker returns a Series, not a DataFrame
-            last_valid = close.dropna()
-            price = float(last_valid.iloc[-1]) if not last_valid.empty else None
-            prices[tickers[0]] = price
-        else:
-            for t in tickers:
-                if t in close.columns:
+
+        for t in tickers:
+            try:
+                if isinstance(close, pd.DataFrame) and t in close.columns:
                     col = close[t].dropna()
                     prices[t] = float(col.iloc[-1]) if not col.empty else None
+                elif isinstance(close, pd.DataFrame) and len(tickers) == 1:
+                    # Single ticker may use the only column available
+                    col = close.iloc[:, 0].dropna()
+                    prices[t] = float(col.iloc[-1]) if not col.empty else None
+                elif isinstance(close, pd.Series):
+                    last_valid = close.dropna()
+                    prices[t] = float(last_valid.iloc[-1]) if not last_valid.empty else None
                 else:
                     prices[t] = None
+            except (IndexError, KeyError):
+                prices[t] = None
 
     except Exception as e:
         logger.error("yfinance download failed: %s", e)
