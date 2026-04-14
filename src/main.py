@@ -28,7 +28,7 @@ from .metadata_lookup import enrich_all_positions
 from .models import DailyPositionsSnapshot
 from .normalization import normalize_all
 from .positions_loader import load_positions
-from .price_service import get_prices
+from .price_service import get_option_price, get_prices
 from .scoring import score_and_rank
 from .storage import (
     ensure_output_dir,
@@ -115,6 +115,8 @@ def run_pipeline(
     for p in positions_file.positions:
         if p.price_override is not None:
             price = p.price_override
+        elif p.position_type == "option" and p.option_type and p.strike and p.expiration:
+            price = get_option_price(p.ticker, p.expiration, p.option_type, p.strike)
         else:
             price = prices.get(p.ticker)
         fx = forex.get(p.currency, 1.0)

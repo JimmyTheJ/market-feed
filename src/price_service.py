@@ -62,7 +62,8 @@ def get_prices(tickers: list[str]) -> dict[str, float | None]:
         now = time.time()
         for ticker, price in fetched.items():
             result[ticker] = price
-            cache[ticker] = {"price": price, "ts": now}
+            if price is not None:
+                cache[ticker] = {"price": price, "ts": now}
         _save_cache(cache)
 
     return result
@@ -127,3 +128,60 @@ def invalidate_cache(ticker: str | None = None) -> None:
     cache = _load_cache()
     cache.pop(ticker.upper(), None)
     _save_cache(cache)
+
+
+def get_option_price(
+    ticker: str,
+    expiration: str,
+    option_type: str,
+    strike: float,
+) -> float | None:
+    """Fetch the last traded premium for a specific option contract.
+
+    Args:
+        ticker: Underlying symbol (e.g. "AAPL").
+        expiration: Expiry date as "YYYY-MM-DD".
+        option_type: "CALL" or "PUT".
+        strike: Strike price.
+
+    Returns:
+        Last price (premium) or None if unavailable.
+    """
+    cache_key = f"{ticker.upper()}_{option_type}_{strike}_{expiration}"
+    cache = _load_cache()
+    entry = cache.get(cache_key)
+    if entry and _is_fresh(entry) and entry.get("price") is not None:
+        return entry["price"]
+
+    try:
+        import yfinance as yf
+
+        t = yf.Ticker(ticker.upper())
+        chain = t.option_chain(expiration)
+        df = chain.calls if option_type.upper() == "CALL" else chain.puts
+
+        # Find the matching strike row
+        row = df[df["strike"] == strike]
+        if row.empty:
+            # Try closest strike
+            closest_idx = (df["strike"] - strike).abs().idxmin()
+            row = df.loc[[closest_idx]]
+            if abs(row.iloc[0]["strike"] - strike) > 1.0:
+                logger.warning(
+                    "No matching strike %.2f for %s %s exp %s",
+                    strike, ticker, option_type, expiration,
+                )
+                return None
+
+        premium = float(row.iloc[0]["lastPrice"])
+        cache[cache_key] = {"price": premium, "ts": time.time()}
+        _save_cache(cache)
+        logger.info(
+            "Fetched option premium for %s %s %.0f %s: %.4f",
+            ticker, option_type, strike, expiration, premium,
+        )
+        return premium
+
+    except Exception as e:
+        logger.warning("Option price lookup failed for %s: %s", cache_key, e)
+        return None

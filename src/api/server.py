@@ -38,7 +38,7 @@ from ..forex_service import get_rates_to
 from ..main import run_pipeline, setup_logging
 from ..models import DEFAULT_CURRENCIES, Position, PositionsFile
 from ..positions_loader import load_positions, save_positions
-from ..price_service import get_prices
+from ..price_service import get_option_price, get_prices
 from ..profile_manager import (
     create_profile,
     delete_profile,
@@ -170,9 +170,14 @@ def _build_positions_response(
     enriched = []
     total_value = 0.0
     for p in pf.positions:
-        live_price = prices.get(p.ticker)
-        # Use override price when set, otherwise fall back to live price
-        effective_price = p.price_override if p.price_override is not None else live_price
+        if p.price_override is not None:
+            effective_price = p.price_override
+        elif p.position_type == "option" and p.option_type and p.strike and p.expiration:
+            effective_price = get_option_price(
+                p.ticker, p.expiration, p.option_type, p.strike
+            )
+        else:
+            effective_price = prices.get(p.ticker)
         fx_rate = forex.get(p.currency, 1.0)
         # Each option contract represents 100 shares of the underlying
         multiplier = 100 if p.position_type == "option" else 1
