@@ -120,7 +120,17 @@ def _fetch_rate(base: str, quote: str) -> float | None:
         if data.empty:
             logger.warning("yfinance returned empty forex data for %s", symbol)
             return None
-        close = data["Close"].dropna()
+        close = data["Close"]
+        # yfinance may return a DataFrame with MultiIndex columns even for a single ticker
+        import pandas as pd
+
+        if isinstance(close, pd.DataFrame):
+            if symbol in close.columns:
+                close = close[symbol].dropna()
+            else:
+                close = close.iloc[:, 0].dropna()
+        else:
+            close = close.dropna()
         if close.empty:
             return None
         rate = float(close.iloc[-1])

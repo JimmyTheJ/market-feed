@@ -575,7 +575,7 @@
         /* ── Chart ─────────────────────────────────────────────────── */
         .chart-container {
             position: relative;
-            max-width: 420px;
+            max-width: 560px;
             margin: 0 auto;
         }
         .chart-legend {
@@ -1895,6 +1895,86 @@
         // ── Chart ─────────────────────────────────────────────────────
         let allocationChart = null;
 
+        // Threshold (%) below which a slice is "too small" for a direct label
+        const LABEL_MIN_PCT = 3;   // slices >= 3% get direct labels
+        const LABEL_TINY_PCT = 1;  // slices < 1% go to "Other" overflow list
+
+        // Custom Chart.js plugin: outer labels with leader lines
+        const outerLabelsPlugin = {
+            id: 'outerLabels',
+            afterDraw(chart) {
+                const { ctx, chartArea } = chart;
+                const meta = chart.getDatasetMeta(0);
+                if (!meta || !meta.data.length) return;
+                const dataset = chart.data.datasets[0];
+                const labels = chart.data.labels;
+                const total = dataset.data.reduce((s, v) => s + v, 0);
+                if (total === 0) return;
+
+                const cx = (chartArea.left + chartArea.right) / 2;
+                const cy = (chartArea.top + chartArea.bottom) / 2;
+                const outerRadius = meta.data[0].outerRadius;
+
+                ctx.save();
+                ctx.font = '12px "SF Mono", Monaco, monospace';
+                ctx.textBaseline = 'middle';
+
+                // Collect label info for slices >= LABEL_MIN_PCT
+                const items = [];
+                meta.data.forEach((arc, i) => {
+                    const pct = dataset.data[i];
+                    if (pct < LABEL_MIN_PCT) return;
+                    const midAngle = (arc.startAngle + arc.endAngle) / 2;
+                    const text = `${labels[i]} ${pct.toFixed(1)}%`;
+                    items.push({ i, midAngle, text, pct, color: dataset.backgroundColor[i] });
+                });
+
+                // Draw each label with a leader line
+                const labelRadius = outerRadius + 18;
+                const textOffset = 14;
+
+                items.forEach(item => {
+                    const cos = Math.cos(item.midAngle);
+                    const sin = Math.sin(item.midAngle);
+
+                    // Point on the arc edge
+                    const ax = cx + outerRadius * cos;
+                    const ay = cy + outerRadius * sin;
+
+                    // Elbow point
+                    const bx = cx + labelRadius * cos;
+                    const by = cy + labelRadius * sin;
+
+                    // Text point — extends horizontally
+                    const isRight = cos >= 0;
+                    const tx = bx + (isRight ? textOffset : -textOffset);
+                    const ty = by;
+
+                    // Leader line
+                    ctx.strokeStyle = item.color;
+                    ctx.lineWidth = 1.2;
+                    ctx.beginPath();
+                    ctx.moveTo(ax, ay);
+                    ctx.lineTo(bx, by);
+                    ctx.lineTo(tx, ty);
+                    ctx.stroke();
+
+                    // Small dot at arc edge
+                    ctx.fillStyle = item.color;
+                    ctx.beginPath();
+                    ctx.arc(ax, ay, 2.5, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Text
+                    ctx.fillStyle = '#e6edf3';
+                    ctx.textAlign = isRight ? 'left' : 'right';
+                    ctx.fillText(item.text, tx, ty);
+                });
+
+                ctx.restore();
+            }
+        };
+
         function renderChart() {
             const canvas = document.getElementById('allocation-chart');
             if (!canvas || !currentPositions.length) return;
@@ -1917,35 +1997,46 @@
                     datasets: [{
                         data,
                         backgroundColor: colors,
-                        borderColor: 'var(--bg)',
+                        borderColor: '#0d1117',
                         borderWidth: 2,
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: true,
-                    cutout: '55%',
+                    cutout: '50%',
+                    layout: {
+                        padding: { top: 40, bottom: 40, left: 80, right: 80 }
+                    },
                     plugins: {
                         legend: { display: false },
                         tooltip: {
                             callbacks: {
-                                label: ctx => ` ${ctx.label}: ${ctx.parsed.toFixed(2)}%`
+                                label: c => ` ${c.label}: ${c.parsed.toFixed(2)}%`
                             }
                         }
                     }
-                }
+                },
+                plugins: [outerLabelsPlugin]
             });
 
-            // Legend
+            // Small-sliver labels that didn't fit as direct labels (< LABEL_MIN_PCT but >= LABEL_TINY_PCT)
             const legendEl = document.getElementById('chart-legend');
-            legendEl.innerHTML = sorted.map((p, i) => {
-                const pct = ((p.weight || 0) * 100).toFixed(1);
-                const lbl = labels[i];
-                return `<div class="chart-legend-item">
-                    <span class="chart-legend-swatch" style="background:${COLORS[i % COLORS.length]}"></span>
-                    <span>${lbl} (${pct}%)</span>
-                </div>`;
-            }).join('');
+            const smallItems = sorted
+                .map((p, i) => ({ label: labels[i], pct: data[i], color: colors[i] }))
+                .filter(item => item.pct > 0 && item.pct < LABEL_MIN_PCT);
+
+            if (smallItems.length > 0) {
+                legendEl.innerHTML = '<div style="font-size:11px;color:var(--text-muted);width:100%;text-align:center;margin-bottom:4px">Smaller positions</div>' +
+                    smallItems.map(item =>
+                        `<div class="chart-legend-item">
+                            <span class="chart-legend-swatch" style="background:${item.color}"></span>
+                            <span>${item.label} (${item.pct.toFixed(1)}%)</span>
+                        </div>`
+                    ).join('');
+            } else {
+                legendEl.innerHTML = '';
+            }
 
             // Total
             const sym = currencySymbol(displayCurrency);
