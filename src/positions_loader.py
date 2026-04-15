@@ -48,6 +48,8 @@ def save_positions(
                 entry["strike"] = p.strike
             if p.expiration is not None:
                 entry["expiration"] = p.expiration
+        elif p.position_type == "cash":
+            entry["position_type"] = "cash"
         positions_out.append(entry)
 
     data: dict = {

@@ -57,8 +57,8 @@ class Position(BaseModel):
     @classmethod
     def valid_position_type(cls, v: str) -> str:
         v = v.lower().strip()
-        if v not in ("equity", "option"):
-            raise ValueError("position_type must be 'equity' or 'option'")
+        if v not in ("equity", "option", "cash"):
+            raise ValueError("position_type must be 'equity', 'option', or 'cash'")
         return v
 
     @field_validator("option_type")
@@ -107,6 +107,8 @@ class PositionsFile(BaseModel):
         for p in v:
             if p.position_type == "option":
                 key = (p.ticker, p.option_type, p.strike, p.expiration)
+            elif p.position_type == "cash":
+                key = (p.ticker, "cash", None, None)
             else:
                 key = (p.ticker, "equity", None, None)
             if key in seen:

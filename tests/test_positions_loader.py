@@ -226,3 +226,61 @@ class TestPriceOverride:
         reloaded = load_positions(filepath)
         assert reloaded.positions[0].price_override == 12.34
         assert reloaded.positions[1].price_override is None
+
+
+class TestCashPositions:
+    def test_cash_position_creation(self):
+        p = Position(ticker="USD", shares=10000, currency="USD", position_type="cash")
+        assert p.position_type == "cash"
+        assert p.ticker == "USD"
+        assert p.shares == 10000
+
+    def test_cash_position_different_currencies(self):
+        for cur in ["USD", "CAD", "BTC"]:
+            p = Position(ticker=cur, shares=500, currency=cur, position_type="cash")
+            assert p.position_type == "cash"
+            assert p.currency == cur
+
+    def test_cash_position_no_option_fields(self):
+        p = Position(ticker="USD", shares=1000, currency="USD", position_type="cash")
+        assert p.option_type is None
+        assert p.option_direction is None
+        assert p.strike is None
+        assert p.expiration is None
+
+    def test_save_load_cash(self, tmp_path):
+        pf = PositionsFile(
+            positions=[
+                Position(ticker="USD", shares=5000, currency="USD", position_type="cash"),
+                Position(ticker="AAPL", shares=10, currency="USD"),
+            ]
+        )
+        filepath = tmp_path / "positions.yaml"
+        save_positions(pf, filepath)
+        reloaded = load_positions(filepath)
+        cash = reloaded.positions[0]
+        assert cash.position_type == "cash"
+        assert cash.ticker == "USD"
+        assert cash.shares == 5000
+        equity = reloaded.positions[1]
+        assert equity.position_type == "equity"
+
+    def test_cash_no_duplicate_with_equity(self):
+        """Cash and equity with same ticker should not conflict."""
+        pf = PositionsFile(
+            positions=[
+                Position(ticker="USD", shares=1000, currency="USD", position_type="cash"),
+                Position(ticker="USD", shares=10, currency="USD", position_type="equity"),
+            ]
+        )
+        assert len(pf.positions) == 2
+
+    def test_cash_duplicate_rejected(self):
+        """Two cash positions with same ticker should be rejected."""
+        with pytest.raises(Exception):
+            PositionsFile(
+                positions=[
+                    Position(ticker="USD", shares=1000, currency="USD", position_type="cash"),
+                    Position(ticker="USD", shares=2000, currency="USD", position_type="cash"),
+                ]
+            )

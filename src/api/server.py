@@ -160,7 +160,7 @@ def _build_positions_response(
     pf: PositionsFile, display_currency: str = "USD"
 ) -> dict:
     """Build the full positions response with live prices and forex conversion."""
-    tickers = [p.ticker for p in pf.positions]
+    tickers = [p.ticker for p in pf.positions if p.position_type != "cash"]
     prices = get_prices(tickers) if tickers else {}
 
     native_currencies = list({p.currency for p in pf.positions})
@@ -171,7 +171,9 @@ def _build_positions_response(
     enriched = []
     total_value = 0.0
     for p in pf.positions:
-        if p.price_override is not None:
+        if p.position_type == "cash":
+            effective_price = 1.0
+        elif p.price_override is not None:
             effective_price = p.price_override
         elif p.position_type == "option" and p.option_type and p.strike and p.expiration:
             effective_price = get_option_price(
@@ -298,8 +300,10 @@ async def get_positions(
     try:
         pf = load_positions(positions_path)
 
-        # Smart refresh: re-fetch stale prices during market hours
-        tickers_currencies = [(p.ticker, p.currency) for p in pf.positions]
+        # Smart refresh: re-fetch stale prices during market hours (skip cash)
+        tickers_currencies = [
+            (p.ticker, p.currency) for p in pf.positions if p.position_type != "cash"
+        ]
         stale = get_tickers_needing_refresh(tickers_currencies, profile=profile)
         if stale:
             get_prices(stale)  # fetches & updates cache

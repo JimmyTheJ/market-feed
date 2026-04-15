@@ -105,7 +105,7 @@ def run_pipeline(
 
     # Step 2b: Compute portfolio weights from live prices
     log("Fetching live prices for weight computation...")
-    tickers = [p.ticker for p in positions_file.positions]
+    tickers = [p.ticker for p in positions_file.positions if p.position_type != "cash"]
     prices = get_prices(tickers)
     native_currencies = list({p.currency for p in positions_file.positions})
     forex = get_rates_to("USD", native_currencies)
@@ -113,7 +113,9 @@ def run_pipeline(
     total_value = 0.0
     position_values: list[float] = []
     for p in positions_file.positions:
-        if p.price_override is not None:
+        if p.position_type == "cash":
+            price = 1.0
+        elif p.price_override is not None:
             price = p.price_override
         elif p.position_type == "option" and p.option_type and p.strike and p.expiration:
             price = get_option_price(p.ticker, p.expiration, p.option_type, p.strike)

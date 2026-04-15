@@ -464,6 +464,7 @@
         }
         .add-tab:first-child { border-radius: var(--radius) 0 0 var(--radius); }
         .add-tab:last-child { border-radius: 0 var(--radius) var(--radius) 0; border-left: none; }
+        .add-tab:not(:first-child):not(:last-child) { border-left: none; border-radius: 0; }
         .add-tab.active { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
         .add-tab-content { display: none; }
         .add-tab-content.active { display: block; }
@@ -541,6 +542,71 @@
             font-size: 11px;
             color: var(--text-muted);
             font-family: 'SF Mono', Monaco, monospace;
+        }
+        .cash-badge {
+            font-size: 10px;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-family: 'SF Mono', Monaco, monospace;
+            font-weight: 600;
+            background: rgba(88,166,255,0.15);
+            color: var(--accent);
+        }
+
+        /* ── Sort Controls ─────────────────────────────────────────── */
+        .sort-controls {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+        .sort-controls select {
+            background: var(--bg);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 3px 6px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .sort-controls select:focus { outline: none; border-color: var(--accent); }
+
+        /* ── Chart ─────────────────────────────────────────────────── */
+        .chart-container {
+            position: relative;
+            max-width: 420px;
+            margin: 0 auto;
+        }
+        .chart-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px 16px;
+            margin-top: 16px;
+            justify-content: center;
+        }
+        .chart-legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--text);
+        }
+        .chart-legend-swatch {
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+            flex-shrink: 0;
+        }
+        .chart-total {
+            text-align: center;
+            margin-top: 12px;
+            font-size: 14px;
+            color: var(--text-muted);
+        }
+        .chart-total strong {
+            color: var(--text);
+            font-size: 18px;
         }
 
         /* ── Ticker Autocomplete ───────────────────────────────────── */
@@ -739,6 +805,7 @@
             .add-form input { min-width: 100%; }
         }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <!-- Profile Selector Overlay -->
@@ -789,6 +856,7 @@
     <div class="container">
         <div class="tabs">
             <div class="tab active" data-tab="positions">Positions</div>
+            <div class="tab" data-tab="charts">Charts</div>
             <div class="tab" data-tab="pipeline">Pipeline</div>
             <div class="tab" data-tab="outputs">Outputs</div>
         </div>
@@ -798,9 +866,22 @@
             <div class="card">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
                     <h2 style="margin-bottom:0">Portfolio Positions</h2>
-                    <div class="currency-selector">
-                        <span>View in</span>
-                        <select id="display-currency" onchange="onDisplayCurrencyChange()"></select>
+                    <div style="display:flex;align-items:center;gap:12px">
+                        <div class="sort-controls">
+                            <span>Sort</span>
+                            <select id="sort-select" onchange="onSortChange()">
+                                <option value="weight-desc">Weight ↓</option>
+                                <option value="weight-asc">Weight ↑</option>
+                                <option value="ticker-asc">Ticker A-Z</option>
+                                <option value="ticker-desc">Ticker Z-A</option>
+                                <option value="value-desc">Value ↓</option>
+                                <option value="value-asc">Value ↑</option>
+                            </select>
+                        </div>
+                        <div class="currency-selector">
+                            <span>View in</span>
+                            <select id="display-currency" onchange="onDisplayCurrencyChange()"></select>
+                        </div>
                     </div>
                 </div>
                 <div class="weight-bar" id="weight-bar"></div>
@@ -815,6 +896,7 @@
                 <div class="add-tabs">
                     <button class="add-tab active" onclick="switchAddTab('equity')">Equity</button>
                     <button class="add-tab" onclick="switchAddTab('option')">Option</button>
+                    <button class="add-tab" onclick="switchAddTab('cash')">Cash</button>
                 </div>
                 <div class="add-form" id="add-form">
                     <div class="ticker-wrap">
@@ -856,6 +938,24 @@
                     <span>Price override</span>
                     <input type="number" id="new-override-price" placeholder="$/share" step="0.01" min="0.01" style="display:none">
                 </div>
+            </div>
+        </div>
+
+        <!-- Charts Tab -->
+        <div class="tab-content" id="tab-charts">
+            <div class="card">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                    <h2 style="margin-bottom:0">Portfolio Allocation</h2>
+                    <div class="currency-selector">
+                        <span>View in</span>
+                        <select id="chart-currency" onchange="onChartCurrencyChange()"></select>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="allocation-chart"></canvas>
+                </div>
+                <div class="chart-total" id="chart-total"></div>
+                <div class="chart-legend" id="chart-legend"></div>
             </div>
         </div>
 
@@ -1179,6 +1279,7 @@
 
                 if (tab.dataset.tab === 'outputs') loadOutputs();
                 if (tab.dataset.tab === 'pipeline') loadSchedule();
+                if (tab.dataset.tab === 'charts') renderChart();
             });
         });
 
@@ -1203,6 +1304,7 @@
         function populateCurrencyDropdowns() {
             const displaySel = document.getElementById('display-currency');
             const addSel = document.getElementById('new-currency');
+            const chartSel = document.getElementById('chart-currency');
 
             displaySel.innerHTML = currencies.map(c =>
                 `<option value="${c}" ${c === displayCurrency ? 'selected' : ''}>${c}</option>`
@@ -1211,11 +1313,23 @@
             addSel.innerHTML = currencies.map(c =>
                 `<option value="${c}">${c}</option>`
             ).join('');
+
+            if (chartSel) {
+                chartSel.innerHTML = currencies.map(c =>
+                    `<option value="${c}" ${c === displayCurrency ? 'selected' : ''}>${c}</option>`
+                ).join('');
+            }
         }
 
         function onDisplayCurrencyChange() {
             displayCurrency = document.getElementById('display-currency').value;
             loadPositions();
+        }
+
+        function onChartCurrencyChange() {
+            displayCurrency = document.getElementById('chart-currency').value;
+            document.getElementById('display-currency').value = displayCurrency;
+            loadPositions().then(() => renderChart());
         }
 
         // ── Positions ───────────────────────────────────────────────────
@@ -1239,8 +1353,23 @@
             currentAddTab = tab;
             document.querySelectorAll('.add-tab').forEach(t => t.classList.toggle('active', t.textContent.toLowerCase() === tab));
             document.getElementById('option-fields').style.display = tab === 'option' ? 'block' : 'none';
-            document.getElementById('new-ticker').placeholder = tab === 'option' ? 'UNDERLYING' : 'TICKER';
-            document.getElementById('new-shares').placeholder = tab === 'option' ? 'Contracts' : 'Shares';
+
+            const tickerWrap = document.querySelector('.ticker-wrap');
+            const sharesInput = document.getElementById('new-shares');
+            const overrideRow = document.getElementById('new-override-check').closest('.override-row');
+
+            if (tab === 'cash') {
+                tickerWrap.style.display = 'none';
+                sharesInput.placeholder = 'Amount';
+                sharesInput.min = '0.01';
+                if (overrideRow) overrideRow.style.display = 'none';
+            } else {
+                tickerWrap.style.display = '';
+                sharesInput.placeholder = tab === 'option' ? 'Contracts' : 'Shares';
+                sharesInput.min = '0.01';
+                document.getElementById('new-ticker').placeholder = tab === 'option' ? 'UNDERLYING' : 'TICKER';
+                if (overrideRow) overrideRow.style.display = '';
+            }
         }
 
         function radioSelect(label) {
@@ -1256,6 +1385,9 @@
                 obj.option_direction = p.option_direction;
                 obj.strike = p.strike;
                 obj.expiration = p.expiration;
+            }
+            if (p.position_type === 'cash') {
+                obj.price_override = null;
             }
             return obj;
         }
@@ -1365,6 +1497,27 @@
             }
         }
 
+        function sortPositions(positions) {
+            const sel = document.getElementById('sort-select');
+            const sort = sel ? sel.value : 'weight-desc';
+            const sorted = [...positions];
+            switch (sort) {
+                case 'weight-desc': sorted.sort((a, b) => (b.weight || 0) - (a.weight || 0)); break;
+                case 'weight-asc': sorted.sort((a, b) => (a.weight || 0) - (b.weight || 0)); break;
+                case 'ticker-asc': sorted.sort((a, b) => a.ticker.localeCompare(b.ticker)); break;
+                case 'ticker-desc': sorted.sort((a, b) => b.ticker.localeCompare(a.ticker)); break;
+                case 'value-desc': sorted.sort((a, b) => (b.display_value || 0) - (a.display_value || 0)); break;
+                case 'value-asc': sorted.sort((a, b) => (a.display_value || 0) - (b.display_value || 0)); break;
+            }
+            return sorted;
+        }
+
+        function onSortChange() {
+            const sel = document.getElementById('sort-select');
+            localStorage.setItem('mf-sort', sel.value);
+            renderPositions({ positions: currentPositions, total_value: totalValue });
+        }
+
         function renderPositions(data) {
             const list = document.getElementById('positions-list');
             const bar = document.getElementById('weight-bar');
@@ -1378,46 +1531,55 @@
                 return;
             }
 
-            bar.innerHTML = positions.map((p, i) => {
+            const sorted = sortPositions(positions);
+
+            bar.innerHTML = sorted.map((p, i) => {
                 const w = (p.weight || 0) * 100;
                 return `<div class="weight-segment" style="width:${w}%;background:${COLORS[i % COLORS.length]}" title="${p.ticker}: ${w.toFixed(2)}%"></div>`;
             }).join('');
 
             const sym = currencySymbol(displayCurrency);
-            list.innerHTML = positions.map((p, i) => {
-                const pct = p.weight != null ? (p.weight * 100).toFixed(2) + '%' : '—';
-                const priceStr = p.price != null ? formatValue(p.price, p.currency) : '—';
-                const valStr = p.display_value != null ? sym + formatValue(p.display_value, displayCurrency) : '—';
-                const overrideMark = p.price_override != null ? '<span class="override-badge" title="Price override active">⚑</span>' : '';
-                let optionInfo = '';
+            list.innerHTML = sorted.map((p, i) => {
+                const origIdx = positions.indexOf(p);
+                const pct = p.weight != null ? (p.weight * 100).toFixed(2) + '%' : '--';
+                const priceStr = p.price != null ? formatValue(p.price, p.currency) : '--';
+                const valStr = p.display_value != null ? sym + formatValue(p.display_value, displayCurrency) : '--';
+                const overrideMark = p.price_override != null ? '<span class="override-badge" title="Price override active">&#9873;</span>' : '';
+                let badgeInfo = '';
                 if (p.position_type === 'option') {
                     const cls = (p.option_type || 'call').toLowerCase();
                     const dir = (p.option_direction || 'LONG');
                     const strikeStr = p.strike != null ? '$' + p.strike : '';
                     const expStr = p.expiration || '';
-                    optionInfo = `<span class="option-badge ${cls}">${dir} ${p.option_type || ''}</span> <span class="option-meta">${strikeStr} ${expStr}</span>`;
+                    badgeInfo = `<span class="option-badge ${cls}">${dir} ${p.option_type || ''}</span> <span class="option-meta">${strikeStr} ${expStr}</span>`;
+                } else if (p.position_type === 'cash') {
+                    badgeInfo = '<span class="cash-badge">CASH</span>';
                 }
-                const displayShares = p.shares;
+                const isCash = p.position_type === 'cash';
                 const isOpt = p.position_type === 'option';
-                const sharesLabel = isOpt ? 'Contracts' : 'Shares';
-                const sharesDetail = isOpt
-                    ? `<span title="${sharesLabel}">${displayShares}c</span> × 100 × <span title="Price (${p.currency})">${priceStr}</span> = <span title="Value (${displayCurrency})">${valStr}</span>`
-                    : `<span title="${sharesLabel}">${displayShares}</span> × <span title="Price (${p.currency})">${priceStr}</span> = <span title="Value (${displayCurrency})">${valStr}</span>`;
+                let sharesDetail;
+                if (isCash) {
+                    sharesDetail = `<span title="Amount">${p.shares} ${p.currency}</span> = <span title="Value (${displayCurrency})">${valStr}</span>`;
+                } else if (isOpt) {
+                    sharesDetail = `<span title="Contracts">${p.shares}c</span> x 100 x <span title="Price (${p.currency})">${priceStr}</span> = <span title="Value (${displayCurrency})">${valStr}</span>`;
+                } else {
+                    sharesDetail = `<span title="Shares">${p.shares}</span> x <span title="Price (${p.currency})">${priceStr}</span> = <span title="Value (${displayCurrency})">${valStr}</span>`;
+                }
                 return `
-                <li class="position-item" id="row-${p.ticker}-${i}">
+                <li class="position-item" id="row-${p.ticker}-${origIdx}">
                     <div class="position-info">
                         <span style="width:8px;height:8px;border-radius:50%;background:${COLORS[i % COLORS.length]};flex-shrink:0"></span>
                         <span class="ticker">${p.ticker}${overrideMark}</span>
-                        ${optionInfo}
-                        <span class="weight-badge" id="badge-${p.ticker}-${i}">${pct}</span>
+                        ${badgeInfo}
+                        <span class="weight-badge" id="badge-${p.ticker}-${origIdx}">${pct}</span>
                     </div>
                     <div style="display:flex;align-items:center;gap:12px">
-                        <div class="position-detail" id="detail-${i}">
+                        <div class="position-detail" id="detail-${origIdx}">
                             ${sharesDetail}
                         </div>
-                        <div class="position-actions" id="actions-${i}">
-                            <button class="btn btn-small btn-edit btn-icon" onclick="startEdit(${i})" title="Edit">✎</button>
-                            <button class="btn btn-small btn-danger btn-icon" onclick="deletePosition(${i})" title="Remove">✕</button>
+                        <div class="position-actions" id="actions-${origIdx}">
+                            <button class="btn btn-small btn-edit btn-icon" onclick="startEdit(${origIdx})" title="Edit">&#9998;</button>
+                            <button class="btn btn-small btn-danger btn-icon" onclick="deletePosition(${origIdx})" title="Remove">&#10005;</button>
                         </div>
                     </div>
                 </li>`;
@@ -1433,16 +1595,15 @@
             if (!pos) return;
 
             const detail = document.getElementById('detail-' + idx);
-            const overrideVal = pos.price_override != null ? pos.price_override : '';
-            const overrideChecked = pos.price_override != null ? 'checked' : '';
-            const overrideDisplay = pos.price_override != null ? 'inline-block' : 'none';
-            const unitLabel = pos.position_type === 'option' ? 'contracts' : 'shares';
-            detail.innerHTML = `
-                <div class="edit-shares-wrap">
-                    <input class="edit-shares-input" id="edit-input-${idx}"
-                           type="number" value="${pos.shares}" step="0.01">
-                    <span class="unit-label">${unitLabel}</span>
-                </div>
+            const isCash = pos.position_type === 'cash';
+            const unitLabel = isCash ? 'amount' : (pos.position_type === 'option' ? 'contracts' : 'shares');
+
+            let overrideHtml = '';
+            if (!isCash) {
+                const overrideVal = pos.price_override != null ? pos.price_override : '';
+                const overrideChecked = pos.price_override != null ? 'checked' : '';
+                const overrideDisplay = pos.price_override != null ? 'inline-block' : 'none';
+                overrideHtml = `
                 <div class="override-row" style="margin-left:8px">
                     <input type="checkbox" id="edit-override-check-${idx}" ${overrideChecked}
                            onchange="document.getElementById('edit-override-price-${idx}').style.display=this.checked?'inline-block':'none'">
@@ -1450,6 +1611,15 @@
                     <input type="number" id="edit-override-price-${idx}" value="${overrideVal}"
                            placeholder="$/share" step="0.01" min="0.01" style="display:${overrideDisplay};width:80px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:12px;">
                 </div>`;
+            }
+
+            detail.innerHTML = `
+                <div class="edit-shares-wrap">
+                    <input class="edit-shares-input" id="edit-input-${idx}"
+                           type="number" value="${pos.shares}" step="0.01">
+                    <span class="unit-label">${unitLabel}</span>
+                </div>
+                ${overrideHtml}`;
 
             document.getElementById('actions-' + idx).innerHTML = `
                 <button class="btn btn-small btn-confirm btn-icon" onclick="saveEdit(${idx})" title="Save">✓</button>
@@ -1503,26 +1673,33 @@
         }
 
         async function addPosition() {
-            const ticker = document.getElementById('new-ticker').value.trim().toUpperCase();
-            const shares = parseFloat(document.getElementById('new-shares').value);
-            const currency = document.getElementById('new-currency').value;
+            const isCash = currentAddTab === 'cash';
             const isOption = currentAddTab === 'option';
+            const currency = document.getElementById('new-currency').value;
+            const shares = parseFloat(document.getElementById('new-shares').value);
+            const ticker = isCash ? currency : document.getElementById('new-ticker').value.trim().toUpperCase();
 
-            if (!ticker) { showToast('Enter a ticker', 'error'); return; }
-            if (isNaN(shares) || shares <= 0) { showToast('Enter a valid number of shares', 'error'); return; }
+            if (!isCash && !ticker) { showToast('Enter a ticker', 'error'); return; }
+            if (isNaN(shares) || shares <= 0) {
+                showToast(`Enter a valid ${isCash ? 'amount' : 'number of shares'}`, 'error');
+                return;
+            }
 
             let priceOverride = null;
-            const overrideCheck = document.getElementById('new-override-check');
-            const overrideInput = document.getElementById('new-override-price');
-            if (overrideCheck.checked) {
-                priceOverride = parseFloat(overrideInput.value);
-                if (isNaN(priceOverride) || priceOverride <= 0) {
-                    showToast('Enter a valid override price', 'error');
-                    return;
+            if (!isCash) {
+                const overrideCheck = document.getElementById('new-override-check');
+                const overrideInput = document.getElementById('new-override-price');
+                if (overrideCheck.checked) {
+                    priceOverride = parseFloat(overrideInput.value);
+                    if (isNaN(priceOverride) || priceOverride <= 0) {
+                        showToast('Enter a valid override price', 'error');
+                        return;
+                    }
                 }
             }
 
-            const newPos = { ticker, shares, currency, price_override: priceOverride, position_type: isOption ? 'option' : 'equity' };
+            const posType = isCash ? 'cash' : (isOption ? 'option' : 'equity');
+            const newPos = { ticker, shares, currency, price_override: priceOverride, position_type: posType };
 
             if (isOption) {
                 const optType = document.querySelector('#rg-option-type label.active input')?.value || 'CALL';
@@ -1542,9 +1719,9 @@
                 if (optDir === 'SHORT') {
                     newPos.shares = -Math.abs(newPos.shares);
                 }
-            } else {
+            } else if (!isCash) {
                 // Equity duplicate check
-                if (currentPositions.find(p => p.ticker === ticker && p.position_type !== 'option')) {
+                if (currentPositions.find(p => p.ticker === ticker && p.position_type !== 'option' && p.position_type !== 'cash')) {
                     showToast(`${ticker} already exists`, 'error'); return;
                 }
             }
@@ -1554,13 +1731,18 @@
                 newPos,
             ];
 
-            await saveAllPositions(newPositions, `Added ${ticker}`);
-            document.getElementById('new-ticker').value = '';
+            const label = isCash ? `${currency} Cash` : ticker;
+            await saveAllPositions(newPositions, `Added ${label}`);
+            if (!isCash) document.getElementById('new-ticker').value = '';
             document.getElementById('new-shares').value = '';
-            if (overrideCheck.checked) {
-                overrideCheck.checked = false;
-                overrideInput.style.display = 'none';
-                overrideInput.value = '';
+            if (!isCash) {
+                const overrideCheck = document.getElementById('new-override-check');
+                const overrideInput = document.getElementById('new-override-price');
+                if (overrideCheck.checked) {
+                    overrideCheck.checked = false;
+                    overrideInput.style.display = 'none';
+                    overrideInput.value = '';
+                }
             }
             if (isOption) {
                 document.getElementById('new-strike').value = '';
@@ -1571,9 +1753,10 @@
         async function deletePosition(idx) {
             const pos = currentPositions[idx];
             if (!pos) return;
-            const label = pos.position_type === 'option'
-                ? `${pos.ticker} ${pos.option_type} ${pos.strike} ${pos.expiration}`
-                : pos.ticker;
+            let label;
+            if (pos.position_type === 'cash') label = `${pos.ticker} Cash`;
+            else if (pos.position_type === 'option') label = `${pos.ticker} ${pos.option_type} ${pos.strike} ${pos.expiration}`;
+            else label = pos.ticker;
             if (!confirm(`Remove ${label}?`)) return;
             const newPositions = currentPositions
                 .filter((_, i) => i !== idx)
@@ -1708,6 +1891,76 @@
         }
 
         // ── Init ────────────────────────────────────────────────────────
+
+        // ── Chart ─────────────────────────────────────────────────────
+        let allocationChart = null;
+
+        function renderChart() {
+            const canvas = document.getElementById('allocation-chart');
+            if (!canvas || !currentPositions.length) return;
+            const ctx = canvas.getContext('2d');
+            const sorted = sortPositions(currentPositions);
+            const labels = sorted.map(p => {
+                if (p.position_type === 'cash') return p.ticker + ' Cash';
+                if (p.position_type === 'option') return `${p.ticker} ${p.option_type} ${p.strike}`;
+                return p.ticker;
+            });
+            const data = sorted.map(p => (p.weight || 0) * 100);
+            const colors = sorted.map((_, i) => COLORS[i % COLORS.length]);
+
+            if (allocationChart) allocationChart.destroy();
+
+            allocationChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels,
+                    datasets: [{
+                        data,
+                        backgroundColor: colors,
+                        borderColor: 'var(--bg)',
+                        borderWidth: 2,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    cutout: '55%',
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => ` ${ctx.label}: ${ctx.parsed.toFixed(2)}%`
+                            }
+                        }
+                    }
+                }
+            });
+
+            // Legend
+            const legendEl = document.getElementById('chart-legend');
+            legendEl.innerHTML = sorted.map((p, i) => {
+                const pct = ((p.weight || 0) * 100).toFixed(1);
+                const lbl = labels[i];
+                return `<div class="chart-legend-item">
+                    <span class="chart-legend-swatch" style="background:${COLORS[i % COLORS.length]}"></span>
+                    <span>${lbl} (${pct}%)</span>
+                </div>`;
+            }).join('');
+
+            // Total
+            const sym = currencySymbol(displayCurrency);
+            document.getElementById('chart-total').innerHTML =
+                `Total: <strong>${sym}${formatValue(totalValue, displayCurrency)}</strong> ${displayCurrency}`;
+        }
+
+        // ── Sort init ────────────────────────────────────────────────
+        (function initSort() {
+            const saved = localStorage.getItem('mf-sort');
+            if (saved) {
+                const sel = document.getElementById('sort-select');
+                if (sel) sel.value = saved;
+            }
+        })();
 
         // Handle enter key in add form
         document.getElementById('new-ticker').addEventListener('keydown', e => {
