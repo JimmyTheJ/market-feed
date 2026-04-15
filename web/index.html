@@ -575,7 +575,7 @@
         /* ── Chart ─────────────────────────────────────────────────── */
         .chart-container {
             position: relative;
-            max-width: 700px;
+            max-width: 600px;
             margin: 0 auto;
         }
         .chart-legend {
@@ -1897,13 +1897,12 @@
 
         // Threshold (%) below which a slice is "too small" for a direct label
         const LABEL_MIN_PCT = 3;   // slices >= 3% get direct labels
-        const LABEL_TINY_PCT = 1;  // slices < 1% go to "Other" overflow list
 
-        // Custom Chart.js plugin: outer labels with leader lines
+        // Custom Chart.js plugin: two-column outer labels with leader lines
         const outerLabelsPlugin = {
             id: 'outerLabels',
             afterDraw(chart) {
-                const { ctx, chartArea } = chart;
+                const { ctx, width, height } = chart;
                 const meta = chart.getDatasetMeta(0);
                 if (!meta || !meta.data.length) return;
                 const dataset = chart.data.datasets[0];
@@ -1911,67 +1910,127 @@
                 const total = dataset.data.reduce((s, v) => s + v, 0);
                 if (total === 0) return;
 
+                const chartArea = chart.chartArea;
                 const cx = (chartArea.left + chartArea.right) / 2;
                 const cy = (chartArea.top + chartArea.bottom) / 2;
                 const outerRadius = meta.data[0].outerRadius;
 
                 ctx.save();
-                ctx.font = '12px "SF Mono", Monaco, monospace';
+                ctx.font = '11px "SF Mono", Monaco, monospace';
                 ctx.textBaseline = 'middle';
 
-                // Collect label info for slices >= LABEL_MIN_PCT
-                const items = [];
+                const lineHeight = 16;
+                const elbowLen = 12;      // radial extension past the arc
+                const connectorGap = 6;   // gap between connector end and text
+
+                // Collect eligible labels, split into left/right by midAngle
+                const rightItems = [];
+                const leftItems = [];
                 meta.data.forEach((arc, i) => {
                     const pct = dataset.data[i];
                     if (pct < LABEL_MIN_PCT) return;
                     const midAngle = (arc.startAngle + arc.endAngle) / 2;
+                    const cos = Math.cos(midAngle);
+                    const sin = Math.sin(midAngle);
                     const text = `${labels[i]} ${pct.toFixed(1)}%`;
-                    items.push({ i, midAngle, text, pct, color: dataset.backgroundColor[i] });
+                    const textW = ctx.measureText(text).width;
+                    const item = {
+                        midAngle, cos, sin, text, textW, pct,
+                        color: dataset.backgroundColor[i],
+                        naturalY: cy + (outerRadius + elbowLen) * sin,
+                    };
+                    if (cos >= 0) rightItems.push(item);
+                    else leftItems.push(item);
                 });
 
-                // Draw each label with a leader line
-                const labelRadius = outerRadius + 18;
-                const textOffset = 14;
+                // Fixed x-positions for text columns — anchored near canvas edges
+                const margin = 8;
+                const rightTextX = width - margin;    // text right-aligns or left-aligns from here
+                const leftTextX = margin;
 
-                items.forEach(item => {
-                    const cos = Math.cos(item.midAngle);
-                    const sin = Math.sin(item.midAngle);
-                    const isRight = cos >= 0;
+                // De-collide vertically: sort by natural Y, then spread
+                function deCollide(items, minY, maxY) {
+                    items.sort((a, b) => a.naturalY - b.naturalY);
+                    // Assign y positions starting from natural, pushing down on overlap
+                    for (let i = 0; i < items.length; i++) {
+                        let y = items[i].naturalY;
+                        // Clamp to bounds
+                        y = Math.max(y, minY + lineHeight / 2);
+                        y = Math.min(y, maxY - lineHeight / 2);
+                        // Push down if overlapping previous
+                        if (i > 0 && y < items[i - 1].y + lineHeight) {
+                            y = items[i - 1].y + lineHeight;
+                        }
+                        items[i].y = y;
+                    }
+                    // If last item overflows, push everything up
+                    if (items.length > 0) {
+                        const last = items[items.length - 1];
+                        if (last.y > maxY - lineHeight / 2) {
+                            const overflow = last.y - (maxY - lineHeight / 2);
+                            for (const item of items) {
+                                item.y -= overflow;
+                            }
+                            // Final clamp pass
+                            for (let i = 0; i < items.length; i++) {
+                                items[i].y = Math.max(items[i].y, minY + lineHeight / 2);
+                                if (i > 0 && items[i].y < items[i - 1].y + lineHeight) {
+                                    items[i].y = items[i - 1].y + lineHeight;
+                                }
+                            }
+                        }
+                    }
+                }
 
-                    // Point on the arc edge
-                    const ax = cx + outerRadius * cos;
-                    const ay = cy + outerRadius * sin;
+                const yMin = chartArea.top;
+                const yMax = chartArea.bottom;
+                deCollide(rightItems, yMin, yMax);
+                deCollide(leftItems, yMin, yMax);
 
-                    // Elbow point
-                    const bx = cx + labelRadius * cos;
-                    const by = cy + labelRadius * sin;
+                // Draw labels and leader lines
+                function drawSide(items, isRight) {
+                    items.forEach(item => {
+                        // Arc edge point
+                        const ax = cx + outerRadius * item.cos;
+                        const ay = cy + outerRadius * item.sin;
 
-                    // Text anchor — push horizontally toward chart edge
-                    const tx = isRight
-                        ? Math.max(bx + textOffset, cx + labelRadius + textOffset)
-                        : Math.min(bx - textOffset, cx - labelRadius - textOffset);
-                    const ty = by;
+                        // Elbow point — extend radially
+                        const elbowX = cx + (outerRadius + elbowLen) * item.cos;
+                        const elbowY = cy + (outerRadius + elbowLen) * item.sin;
 
-                    // Leader line
-                    ctx.strokeStyle = item.color;
-                    ctx.lineWidth = 1.2;
-                    ctx.beginPath();
-                    ctx.moveTo(ax, ay);
-                    ctx.lineTo(bx, by);
-                    ctx.lineTo(tx, ty);
-                    ctx.stroke();
+                        // Text position
+                        const textX = isRight ? rightTextX : leftTextX;
+                        const textY = item.y;
 
-                    // Small dot at arc edge
-                    ctx.fillStyle = item.color;
-                    ctx.beginPath();
-                    ctx.arc(ax, ay, 2.5, 0, Math.PI * 2);
-                    ctx.fill();
+                        // Horizontal connector end (where leader meets the text column)
+                        const connEnd = isRight
+                            ? textX - item.textW - connectorGap
+                            : textX + item.textW + connectorGap;
 
-                    // Text
-                    ctx.fillStyle = '#e6edf3';
-                    ctx.textAlign = isRight ? 'left' : 'right';
-                    ctx.fillText(item.text, tx, ty);
-                });
+                        // Leader line: arc edge → elbow → horizontal to text
+                        ctx.strokeStyle = item.color;
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.moveTo(ax, ay);
+                        ctx.lineTo(elbowX, elbowY);
+                        ctx.lineTo(connEnd, textY);
+                        ctx.stroke();
+
+                        // Small dot at arc edge
+                        ctx.fillStyle = item.color;
+                        ctx.beginPath();
+                        ctx.arc(ax, ay, 2, 0, Math.PI * 2);
+                        ctx.fill();
+
+                        // Text
+                        ctx.fillStyle = '#e6edf3';
+                        ctx.textAlign = isRight ? 'right' : 'left';
+                        ctx.fillText(item.text, textX, textY);
+                    });
+                }
+
+                drawSide(rightItems, true);
+                drawSide(leftItems, false);
 
                 ctx.restore();
             }
@@ -2008,7 +2067,7 @@
                     maintainAspectRatio: true,
                     cutout: '50%',
                     layout: {
-                        padding: { top: 40, bottom: 40, left: 120, right: 120 }
+                        padding: { top: 30, bottom: 30, left: 16, right: 16 }
                     },
                     plugins: {
                         legend: { display: false },
