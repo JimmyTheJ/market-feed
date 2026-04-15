@@ -575,7 +575,7 @@
         /* ── Chart ─────────────────────────────────────────────────── */
         .chart-container {
             position: relative;
-            max-width: 600px;
+            max-width: 640px;
             margin: 0 auto;
         }
         .chart-legend {
@@ -1920,8 +1920,13 @@
                 ctx.textBaseline = 'middle';
 
                 const lineHeight = 16;
-                const elbowLen = 12;      // radial extension past the arc
-                const connectorGap = 6;   // gap between connector end and text
+                const stubLen = 14;       // radial stub past the arc
+                const colGap = 24;        // gap between pie edge and text column line
+                const textPad = 4;        // space between column line and text
+
+                // Column line x-positions: just outside the pie
+                const rightColX = cx + outerRadius + colGap;
+                const leftColX = cx - outerRadius - colGap;
 
                 // Collect eligible labels, split into left/right by midAngle
                 const rightItems = [];
@@ -1937,84 +1942,100 @@
                     const item = {
                         midAngle, cos, sin, text, textW, pct,
                         color: dataset.backgroundColor[i],
-                        naturalY: cy + (outerRadius + elbowLen) * sin,
+                        naturalY: cy + (outerRadius + stubLen) * sin,
                     };
                     if (cos >= 0) rightItems.push(item);
                     else leftItems.push(item);
                 });
 
-                // Fixed x-positions for text columns — anchored near canvas edges
-                const margin = 8;
-                const rightTextX = width - margin;    // text right-aligns or left-aligns from here
-                const leftTextX = margin;
-
-                // De-collide vertically: sort by natural Y, then spread
-                function deCollide(items, minY, maxY) {
+                // De-collide: sort by natural Y, push apart, center the group
+                function deCollide(items) {
+                    if (!items.length) return;
                     items.sort((a, b) => a.naturalY - b.naturalY);
-                    // Assign y positions starting from natural, pushing down on overlap
+
+                    // Use full canvas height with some margin
+                    const topBound = 12;
+                    const botBound = height - 12;
+
+                    // Initial placement from natural positions
                     for (let i = 0; i < items.length; i++) {
-                        let y = items[i].naturalY;
-                        // Clamp to bounds
-                        y = Math.max(y, minY + lineHeight / 2);
-                        y = Math.min(y, maxY - lineHeight / 2);
-                        // Push down if overlapping previous
-                        if (i > 0 && y < items[i - 1].y + lineHeight) {
-                            y = items[i - 1].y + lineHeight;
-                        }
-                        items[i].y = y;
+                        items[i].y = items[i].naturalY;
                     }
-                    // If last item overflows, push everything up
-                    if (items.length > 0) {
-                        const last = items[items.length - 1];
-                        if (last.y > maxY - lineHeight / 2) {
-                            const overflow = last.y - (maxY - lineHeight / 2);
-                            for (const item of items) {
-                                item.y -= overflow;
-                            }
-                            // Final clamp pass
-                            for (let i = 0; i < items.length; i++) {
-                                items[i].y = Math.max(items[i].y, minY + lineHeight / 2);
-                                if (i > 0 && items[i].y < items[i - 1].y + lineHeight) {
-                                    items[i].y = items[i - 1].y + lineHeight;
-                                }
+
+                    // Push overlapping labels apart (downward)
+                    for (let i = 1; i < items.length; i++) {
+                        if (items[i].y < items[i - 1].y + lineHeight) {
+                            items[i].y = items[i - 1].y + lineHeight;
+                        }
+                    }
+
+                    // If group overflows bottom, shift everything up
+                    const groupBottom = items[items.length - 1].y;
+                    const groupTop = items[0].y;
+                    if (groupBottom > botBound) {
+                        const shift = groupBottom - botBound;
+                        for (const item of items) item.y -= shift;
+                    }
+
+                    // If group overflows top after shifting, clamp and re-spread
+                    if (items[0].y < topBound) {
+                        items[0].y = topBound;
+                        for (let i = 1; i < items.length; i++) {
+                            if (items[i].y < items[i - 1].y + lineHeight) {
+                                items[i].y = items[i - 1].y + lineHeight;
                             }
                         }
+                    }
+
+                    // Center the group around cy if there's room
+                    const finalTop = items[0].y;
+                    const finalBot = items[items.length - 1].y;
+                    const groupH = finalBot - finalTop;
+                    const idealCenter = cy;
+                    const currentCenter = (finalTop + finalBot) / 2;
+                    let nudge = idealCenter - currentCenter;
+                    // Only nudge if it won't push out of bounds
+                    if (finalTop + nudge >= topBound && finalBot + nudge <= botBound) {
+                        for (const item of items) item.y += nudge;
                     }
                 }
 
-                const yMin = chartArea.top;
-                const yMax = chartArea.bottom;
-                deCollide(rightItems, yMin, yMax);
-                deCollide(leftItems, yMin, yMax);
+                deCollide(rightItems);
+                deCollide(leftItems);
 
                 // Draw labels and leader lines
                 function drawSide(items, isRight) {
+                    const colX = isRight ? rightColX : leftColX;
+
                     items.forEach(item => {
                         // Arc edge point
                         const ax = cx + outerRadius * item.cos;
                         const ay = cy + outerRadius * item.sin;
 
-                        // Elbow point — extend radially
-                        const elbowX = cx + (outerRadius + elbowLen) * item.cos;
-                        const elbowY = cy + (outerRadius + elbowLen) * item.sin;
+                        // Stub point — short radial extension
+                        const sx = cx + (outerRadius + stubLen) * item.cos;
+                        const sy = cy + (outerRadius + stubLen) * item.sin;
+
+                        // Final label Y (de-collided)
+                        const labelY = item.y;
 
                         // Text position
-                        const textX = isRight ? rightTextX : leftTextX;
-                        const textY = item.y;
+                        const textX = isRight ? colX + textPad : colX - textPad;
 
-                        // Horizontal connector end (where leader meets the text column)
-                        const connEnd = isRight
-                            ? textX - item.textW - connectorGap
-                            : textX + item.textW + connectorGap;
-
-                        // Leader line: arc edge → elbow → horizontal to text
+                        // Leader line: arc → stub → column at labelY
+                        // Three segments for clean geometry:
+                        // 1) arc edge to stub (radial)
+                        // 2) stub to (colX, labelY) — diagonal bridge
+                        // 3) short horizontal tick at column line
                         ctx.strokeStyle = item.color;
                         ctx.lineWidth = 1;
+                        ctx.globalAlpha = 0.7;
                         ctx.beginPath();
                         ctx.moveTo(ax, ay);
-                        ctx.lineTo(elbowX, elbowY);
-                        ctx.lineTo(connEnd, textY);
+                        ctx.lineTo(sx, sy);
+                        ctx.lineTo(colX, labelY);
                         ctx.stroke();
+                        ctx.globalAlpha = 1.0;
 
                         // Small dot at arc edge
                         ctx.fillStyle = item.color;
@@ -2024,8 +2045,8 @@
 
                         // Text
                         ctx.fillStyle = '#e6edf3';
-                        ctx.textAlign = isRight ? 'right' : 'left';
-                        ctx.fillText(item.text, textX, textY);
+                        ctx.textAlign = isRight ? 'left' : 'right';
+                        ctx.fillText(item.text, textX, labelY);
                     });
                 }
 
@@ -2067,7 +2088,7 @@
                     maintainAspectRatio: true,
                     cutout: '50%',
                     layout: {
-                        padding: { top: 30, bottom: 30, left: 16, right: 16 }
+                        padding: { top: 20, bottom: 20, left: 140, right: 140 }
                     },
                     plugins: {
                         legend: { display: false },
