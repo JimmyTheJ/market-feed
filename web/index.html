@@ -575,7 +575,7 @@
         /* ── Chart ─────────────────────────────────────────────────── */
         .chart-container {
             position: relative;
-            max-width: 560px;
+            max-width: 700px;
             margin: 0 auto;
         }
         .chart-legend {
@@ -1936,6 +1936,7 @@
                 items.forEach(item => {
                     const cos = Math.cos(item.midAngle);
                     const sin = Math.sin(item.midAngle);
+                    const isRight = cos >= 0;
 
                     // Point on the arc edge
                     const ax = cx + outerRadius * cos;
@@ -1945,9 +1946,10 @@
                     const bx = cx + labelRadius * cos;
                     const by = cy + labelRadius * sin;
 
-                    // Text point — extends horizontally
-                    const isRight = cos >= 0;
-                    const tx = bx + (isRight ? textOffset : -textOffset);
+                    // Text anchor — push horizontally toward chart edge
+                    const tx = isRight
+                        ? Math.max(bx + textOffset, cx + labelRadius + textOffset)
+                        : Math.min(bx - textOffset, cx - labelRadius - textOffset);
                     const ty = by;
 
                     // Leader line
@@ -2006,7 +2008,7 @@
                     maintainAspectRatio: true,
                     cutout: '50%',
                     layout: {
-                        padding: { top: 40, bottom: 40, left: 80, right: 80 }
+                        padding: { top: 40, bottom: 40, left: 120, right: 120 }
                     },
                     plugins: {
                         legend: { display: false },
