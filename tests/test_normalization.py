@@ -122,3 +122,40 @@ class TestNormalizeAll:
         ]
         result = normalize_all(raw_articles)
         assert len(result) == 1
+
+    def test_fuzzy_dedup_similar_titles(self):
+        """Articles with near-identical titles from different sources should be deduped."""
+        raw_articles = [
+            {"title": "Fed raises interest rates by 25 basis points",
+             "content": "Content A", "url": "url1",
+             "source_name": "reuters", "category": "macro"},
+            {"title": "Fed raises interest rates by 25 basis points today",
+             "content": "Content B", "url": "url2",
+             "source_name": "bloomberg", "category": "macro"},
+        ]
+        result = normalize_all(raw_articles)
+        assert len(result) == 1
+
+    def test_fuzzy_dedup_different_titles_kept(self):
+        """Articles with genuinely different titles should be kept."""
+        raw_articles = [
+            {"title": "Bitcoin surges past $100k on ETF news update",
+             "content": "Content A", "url": "url1",
+             "source_name": "coindesk", "category": "crypto"},
+            {"title": "Oil prices rise 3% on OPEC+ production cuts agreement",
+             "content": "Content B", "url": "url2",
+             "source_name": "reuters", "category": "energy"},
+        ]
+        result = normalize_all(raw_articles)
+        assert len(result) == 2
+
+    def test_fuzzy_dedup_skips_short_titles(self):
+        """Short titles should not trigger fuzzy matching."""
+        raw_articles = [
+            {"title": "Rate hike", "content": "C1", "url": "u1",
+             "source_name": "s1", "category": "g"},
+            {"title": "Rate cut", "content": "C2", "url": "u2",
+             "source_name": "s2", "category": "g"},
+        ]
+        result = normalize_all(raw_articles)
+        assert len(result) == 2

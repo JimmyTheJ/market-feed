@@ -3,6 +3,7 @@
 import hashlib
 import logging
 import re
+from difflib import SequenceMatcher
 from html import unescape
 
 from .models import NormalizedArticle
@@ -108,21 +109,43 @@ def normalize_article(raw: dict) -> NormalizedArticle:
     )
 
 
+def _is_similar_title(title_a: str, title_b: str, threshold: float = 0.85) -> bool:
+    """Check if two article titles are similar enough to be duplicates."""
+    a = title_a.lower().strip()
+    b = title_b.lower().strip()
+    if a == b:
+        return True
+    # Only apply fuzzy matching on titles with enough text to be meaningful
+    if len(a) < 20 or len(b) < 20:
+        return False
+    return SequenceMatcher(None, a, b).ratio() >= threshold
+
+
 def normalize_all(raw_articles: list[dict]) -> list[NormalizedArticle]:
-    """Normalize all raw articles, deduplicating by ID."""
+    """Normalize all raw articles, deduplicating by ID and fuzzy title match."""
     normalized = []
     seen_ids: set[str] = set()
+    accepted_titles: list[str] = []
 
     for raw in raw_articles:
         try:
             article = normalize_article(raw)
-            if article.id not in seen_ids:
-                seen_ids.add(article.id)
-                normalized.append(article)
+            if article.id in seen_ids:
+                continue
+            seen_ids.add(article.id)
+
+            # Fuzzy title dedup: skip if very similar to an already-accepted title
+            if any(_is_similar_title(article.title, t) for t in accepted_titles):
+                continue
+
+            accepted_titles.append(article.title)
+            normalized.append(article)
         except Exception as e:
             logger.warning(f"Failed to normalize article: {e}")
 
+    deduped = len(raw_articles) - len(normalized)
     logger.info(
-        f"Normalized {len(normalized)} articles (deduped from {len(raw_articles)})"
+        f"Normalized {len(normalized)} articles "
+        f"(removed {deduped} duplicates from {len(raw_articles)} raw)"
     )
     return normalized

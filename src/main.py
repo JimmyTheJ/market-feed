@@ -63,11 +63,13 @@ def run_pipeline(
     output_base: str = "output",
     use_ollama: bool = True,
     profile: str | None = None,
+    run_label: str = "",
 ) -> dict:
     """Execute the complete market pipeline.
 
     Paths default to the config_loader resolution (user override → default).
     If profile is provided, config files are resolved from the profile directory.
+    run_label (e.g. "AM", "PM") differentiates multiple runs per day.
     Returns a dict with run statistics.
     """
     start_time = time.time()
@@ -80,7 +82,8 @@ def run_pipeline(
         log_lines.append(entry)
         logger.info(msg)
 
-    log(f"=== Market Pipeline Run: {run_date.isoformat()} ===")
+    label_display = f" ({run_label})" if run_label else ""
+    log(f"=== Market Pipeline Run: {run_date.isoformat()}{label_display} ===")
 
     # Resolve paths via config_loader if not explicitly provided
     if not positions_path:
@@ -95,7 +98,7 @@ def run_pipeline(
         output_base = str(Path(output_base) / profile)
 
     # Step 1: Create output directory
-    output_dir = ensure_output_dir(output_base, run_date)
+    output_dir = ensure_output_dir(output_base, run_date, run_label)
     log(f"Output directory: {output_dir}")
 
     # Step 2: Load positions
@@ -146,7 +149,7 @@ def run_pipeline(
 
     # Step 4: Write daily positions snapshot
     snapshot = DailyPositionsSnapshot(date=run_date, positions=enriched)
-    write_daily_positions(output_dir, snapshot)
+    write_daily_positions(output_dir, snapshot, run_label)
     log("Wrote daily positions snapshot")
 
     # Step 5: Load and fetch sources
@@ -162,7 +165,7 @@ def run_pipeline(
     normalized = normalize_all(raw_articles)
     log(f"Normalized {len(normalized)} articles")
 
-    write_raw_articles(output_dir, run_date, normalized)
+    write_raw_articles(output_dir, run_date, normalized, run_label)
 
     # Step 7: Score and rank
     log("Scoring and ranking articles...")
@@ -173,28 +176,31 @@ def run_pipeline(
     scored = score_and_rank(normalized, enriched, source_priorities)
     log(f"Scored {len(scored)} articles")
 
-    write_ranked_articles(output_dir, run_date, scored)
+    write_ranked_articles(output_dir, run_date, scored, run_label)
 
     # Step 8: Summarize
     log("Generating portfolio summary...")
-    summary = generate_portfolio_summary(run_date, enriched, scored, use_ollama)
+    summary = generate_portfolio_summary(
+        run_date, enriched, scored, use_ollama, run_label=run_label,
+    )
     log("Generated portfolio summary")
 
-    write_summary_payload(output_dir, run_date, summary.model_dump(mode="json"))
+    write_summary_payload(output_dir, run_date, summary.model_dump(mode="json"), run_label)
 
     # Step 9: Write digest
     log("Writing market digest...")
     digest_content = generate_digest(summary, snapshot)
-    write_digest(output_dir, run_date, digest_content)
+    write_digest(output_dir, run_date, digest_content, run_label)
     log("Wrote market digest")
 
     elapsed = time.time() - start_time
     log(f"=== Pipeline complete in {elapsed:.1f}s ===")
 
-    write_run_log(output_dir, run_date, log_lines)
+    write_run_log(output_dir, run_date, log_lines, run_label)
 
     return {
         "date": run_date.isoformat(),
+        "run_label": run_label,
         "output_dir": str(output_dir),
         "positions_count": len(enriched),
         "articles_fetched": len(raw_articles),

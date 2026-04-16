@@ -1,6 +1,7 @@
 """Generate the daily Markdown digest."""
 
 import logging
+import os
 
 from .models import DailyPositionsSnapshot, PortfolioSummary
 
@@ -13,12 +14,21 @@ def generate_digest(
 ) -> str:
     """Generate the Markdown digest content."""
     d = summary.date.isoformat()
+    label_suffix = f" {summary.run_label}" if summary.run_label else ""
     lines: list[str] = []
 
     # Header
-    lines.append(f"# Market Digest - {d}")
+    lines.append(f"# Daily Digest: {d}{label_suffix}")
     lines.append("")
-    lines.append(f"Generated from: output/{d}-analysis/daily-positions-{d}.yaml")
+
+    # LLM usage indicator
+    if summary.llm_used:
+        model = os.getenv("OLLAMA_MODEL", "llama3.2")
+        lines.append(f"> 🤖 **Summary method:** AI-generated ({model})")
+    else:
+        lines.append("> 📋 **Summary method:** Extractive (LLM unavailable)")
+    lines.append("")
+
     lines.append(f"Positions analyzed: {len(snapshot.positions)}")
     if summary.top_themes:
         lines.append(f"Top portfolio themes: {', '.join(summary.top_themes[:6])}")
@@ -57,6 +67,8 @@ def generate_digest(
         if ps.underlying:
             lines.append(f"**Underlying:** {ps.underlying}")
         lines.append(f"**Today's net bias:** {ps.net_bias.capitalize()}")
+        llm_tag = "🤖 AI" if ps.llm_used else "📋 Extractive"
+        lines.append(f"**Analysis:** {llm_tag}")
         lines.append("")
 
         if ps.key_items:

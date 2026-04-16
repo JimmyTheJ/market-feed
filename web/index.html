@@ -1822,9 +1822,13 @@
                 const res = await apiFetch(API + '/api/pipeline/status');
                 const data = await res.json();
                 const info = document.getElementById('schedule-info');
+                const jobsHtml = (data.jobs || []).map(j => {
+                    const label = j.id.replace('pipeline_', '').toUpperCase() || 'Default';
+                    return `<div>Next ${label}: ${j.next_run || 'Not scheduled'}</div>`;
+                }).join('');
                 info.innerHTML = `
                     <div style="margin-bottom:8px">Scheduler: ${data.scheduler_running ? '<span style="color:var(--green)">Running</span>' : '<span style="color:var(--red)">Stopped</span>'}</div>
-                    <div>Next run: ${data.next_scheduled_run || 'Not scheduled'}</div>
+                    ${jobsHtml || '<div>No scheduled jobs</div>'}
                 `;
                 document.getElementById('scheduler-status').textContent =
                     data.scheduler_running ? '● Scheduled' : '○ No schedule';
@@ -1847,10 +1851,14 @@
                     return;
                 }
                 list.innerHTML = data.outputs.map(dir => {
-                    const dateStr = dir.replace('-analysis', '');
+                    // dir is like "2026-04-15-analysis-am" or "2026-04-15-analysis"
+                    const parts = dir.replace('-analysis', '').split('-');
+                    const datePart = parts.slice(0, 3).join('-');
+                    const label = parts.length > 3 ? parts.slice(3).join('-').toUpperCase() : '';
+                    const display = label ? `${datePart} ${label}` : datePart;
                     return `<li class="output-item">
-                        <span class="output-date">${dateStr}</span>
-                        <button class="btn btn-small" onclick="loadDigest('${dateStr}')">View Digest</button>
+                        <span class="output-date">${display}</span>
+                        <button class="btn btn-small" onclick="loadDigest('${dir}')">View Digest</button>
                     </li>`;
                 }).join('');
             } catch (e) {
@@ -1858,17 +1866,17 @@
             }
         }
 
-        async function loadDigest(dateStr) {
+        async function loadDigest(dirName) {
             const card = document.getElementById('digest-card');
             const title = document.getElementById('digest-title');
             const content = document.getElementById('digest-content');
 
             card.style.display = 'block';
-            title.textContent = `Digest - ${dateStr}`;
+            title.textContent = `Digest - ${dirName.replace('-analysis', '').replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).replace(/Analysis/i, '')}`;
             content.innerHTML = '<span class="spinner"></span> Loading...';
 
             try {
-                const res = await apiFetch(apiUrl(`/api/outputs/${dateStr}/digest`));
+                const res = await apiFetch(apiUrl(`/api/outputs/${dirName}/digest`));
                 if (!res.ok) { content.textContent = 'Digest not found.'; return; }
                 const data = await res.json();
                 content.innerHTML = markdownToHtml(data.content);
@@ -1879,6 +1887,7 @@
 
         function markdownToHtml(md) {
             return md
+                .replace(/^> (.+)$/gm, '<blockquote style="border-left:3px solid var(--accent);padding:4px 12px;margin:8px 0;color:var(--text-muted)">$1</blockquote>')
                 .replace(/^#### (.+)$/gm, '<h4>$1</h4>')
                 .replace(/^### (.+)$/gm, '<h3>$1</h3>')
                 .replace(/^## (.+)$/gm, '<h2>$1</h2>')

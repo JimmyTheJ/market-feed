@@ -101,3 +101,24 @@ class TestWriteRunLog:
         content = filepath.read_text()
         assert "Starting pipeline" in content
         assert "Done" in content
+
+
+class TestAmPmLabels:
+    def test_output_dir_with_label(self, tmp_path):
+        d = date(2026, 4, 3)
+        result = ensure_output_dir(tmp_path, d, "AM")
+        assert result.name == "2026-04-03-analysis-am"
+
+    def test_output_dir_without_label(self, tmp_path):
+        d = date(2026, 4, 3)
+        result = ensure_output_dir(tmp_path, d)
+        assert result.name == "2026-04-03-analysis"
+
+    def test_digest_filename_with_label(self, tmp_path, run_date):
+        content = "# Test"
+        filepath = write_digest(tmp_path, run_date, content, "PM")
+        assert "pm" in filepath.name
+
+    def test_run_log_filename_with_label(self, tmp_path, run_date):
+        filepath = write_run_log(tmp_path, run_date, ["test"], "AM")
+        assert "am" in filepath.name

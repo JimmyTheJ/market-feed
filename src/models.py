@@ -182,15 +182,18 @@ class PositionSummary(BaseModel):
     risks: list[str] = Field(default_factory=list)
     bullish_factors: list[str] = Field(default_factory=list)
     bearish_factors: list[str] = Field(default_factory=list)
+    llm_used: bool = False
 
 
 class PortfolioSummary(BaseModel):
     """Summary for the whole portfolio."""
 
     date: date
+    run_label: str = ""
     top_themes: list[str] = Field(default_factory=list)
     top_signals: list[dict] = Field(default_factory=list)
     position_summaries: list[PositionSummary] = Field(default_factory=list)
     contrarian_views: list[str] = Field(default_factory=list)
     what_matters: list[str] = Field(default_factory=list)
     what_is_noise: list[str] = Field(default_factory=list)
+    llm_used: bool = False

@@ -322,8 +322,9 @@ class TestPipelineIntegration:
             assert filepath.exists(), f"Missing output file: {filename}"
 
         # Verify digest content
-        digest_content = (analysis_dir / "market_digest-2026-04-03.md").read_text()
-        assert "# Market Digest - 2026-04-03" in digest_content
+        digest_content = (analysis_dir / "market_digest-2026-04-03.md").read_text(encoding="utf-8")
+        assert "# Daily Digest: 2026-04-03" in digest_content
+        assert "Summary method:" in digest_content
         assert "## Position Analysis" in digest_content
         assert "IBIT" in digest_content
         assert "QQQ" in digest_content

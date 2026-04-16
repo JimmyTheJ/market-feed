@@ -24,6 +24,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
+import yaml
+
 from ..auth.middleware import (
     AUTH_ENABLED,
     LoginRequest,
@@ -55,35 +57,69 @@ logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
 
 
-def scheduled_pipeline_run():
+def scheduled_pipeline_run(run_label: str = ""):
     """Run the pipeline on schedule."""
-    logger.info("Scheduled pipeline run starting...")
+    label_display = f" ({run_label})" if run_label else ""
+    logger.info(f"Scheduled pipeline run{label_display} starting...")
     try:
         use_ollama = os.getenv("USE_OLLAMA", "true").lower() == "true"
         output_base = os.getenv("OUTPUT_BASE_PATH", "output")
-        result = run_pipeline(output_base=output_base, use_ollama=use_ollama)
-        logger.info(f"Scheduled run complete: {result}")
+        result = run_pipeline(
+            output_base=output_base,
+            use_ollama=use_ollama,
+            run_label=run_label,
+        )
+        logger.info(f"Scheduled run{label_display} complete: {result}")
     except Exception as e:
-        logger.error(f"Scheduled run failed: {e}", exc_info=True)
+        logger.error(f"Scheduled run{label_display} failed: {e}", exc_info=True)
+
+
+def _load_schedule_config() -> tuple[list[dict], str]:
+    """Load pipeline schedule from settings.yaml or env vars."""
+    settings_path = Path("config/defaults/settings.yaml")
+    if settings_path.exists():
+        with open(settings_path) as f:
+            settings = yaml.safe_load(f) or {}
+        schedule_cfg = settings.get("schedule", {})
+        runs = schedule_cfg.get("runs", [])
+        tz = schedule_cfg.get("timezone", "America/New_York")
+        if runs:
+            return runs, tz
+
+    # Fallback to env vars (single run, backward compatible)
+    run_hour = int(os.getenv("PIPELINE_RUN_HOUR", "6"))
+    run_minute = int(os.getenv("PIPELINE_RUN_MINUTE", "30"))
+    tz = os.getenv("PIPELINE_TIMEZONE", "America/New_York")
+    return [{"label": "", "hour": run_hour, "minute": run_minute}], tz
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    run_hour = int(os.getenv("PIPELINE_RUN_HOUR", "6"))
-    run_minute = int(os.getenv("PIPELINE_RUN_MINUTE", "30"))
-    tz = os.getenv("PIPELINE_TIMEZONE", "America/New_York")
+    runs, tz = _load_schedule_config()
 
-    scheduler.add_job(
-        scheduled_pipeline_run,
-        "cron",
-        hour=run_hour,
-        minute=run_minute,
-        timezone=tz,
-        id="daily_pipeline",
-        replace_existing=True,
-    )
+    for run_cfg in runs:
+        label = run_cfg.get("label", "")
+        hour = run_cfg.get("hour", 6)
+        minute = run_cfg.get("minute", 0)
+        job_id = f"pipeline_{label.lower()}" if label else "daily_pipeline"
+
+        scheduler.add_job(
+            scheduled_pipeline_run,
+            "cron",
+            hour=hour,
+            minute=minute,
+            timezone=tz,
+            id=job_id,
+            replace_existing=True,
+            kwargs={"run_label": label},
+        )
+        label_display = f" ({label})" if label else ""
+        logger.info(
+            f"Scheduler: pipeline{label_display} at {hour:02d}:{minute:02d} {tz}"
+        )
+
     scheduler.start()
-    logger.info(f"Scheduler started: daily run at {run_hour:02d}:{run_minute:02d} {tz}")
+    logger.info(f"Scheduler started with {len(runs)} job(s)")
 
     yield
 
@@ -151,6 +187,7 @@ class ProfileCreate(BaseModel):
 class PipelineRunRequest(BaseModel):
     date: Optional[str] = None
     use_ollama: bool = True
+    run_label: str = ""
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -541,6 +578,7 @@ async def trigger_pipeline(
             output_base=output_base,
             use_ollama=request.use_ollama,
             profile=profile,
+            run_label=request.run_label,
         )
         return {"status": "completed", **result}
     except Exception as e:
@@ -551,13 +589,16 @@ async def trigger_pipeline(
 async def pipeline_status(user: dict = Depends(require_auth)):
     """Get pipeline and scheduler status."""
     jobs = scheduler.get_jobs()
-    next_run = None
-    if jobs:
-        next_run = str(jobs[0].next_run_time)
+    job_list = []
+    for job in jobs:
+        job_list.append({
+            "id": job.id,
+            "next_run": str(job.next_run_time) if job.next_run_time else None,
+        })
 
     return {
         "scheduler_running": scheduler.running,
-        "next_scheduled_run": next_run,
+        "jobs": job_list,
         "jobs_count": len(jobs),
     }
 
@@ -578,7 +619,7 @@ async def list_outputs(
         [
             d.name
             for d in output_base.iterdir()
-            if d.is_dir() and d.name.endswith("-analysis")
+            if d.is_dir() and "-analysis" in d.name
         ],
         reverse=True,
     )
@@ -586,23 +627,27 @@ async def list_outputs(
     return {"outputs": dirs}
 
 
-@app.get("/api/outputs/{date_str}/digest")
+@app.get("/api/outputs/{dir_name}/digest")
 async def get_digest(
-    date_str: str,
+    dir_name: str,
     profile: str | None = None,
     user: dict = Depends(require_auth),
 ):
-    """Get the digest for a specific date."""
+    """Get the digest for a specific output directory."""
     output_base = Path(os.getenv("OUTPUT_BASE_PATH", "output"))
     if profile:
         output_base = output_base / profile
-    digest_path = (
-        output_base / f"{date_str}-analysis" / f"market_digest-{date_str}.md"
-    )
+    output_dir = output_base / dir_name
 
-    if not digest_path.exists():
+    if not output_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Output not found: {dir_name}")
+
+    # Find any digest file in the directory
+    digest_files = list(output_dir.glob("market_digest-*.md"))
+    if not digest_files:
         raise HTTPException(
-            status_code=404, detail=f"Digest not found for {date_str}"
+            status_code=404, detail=f"Digest not found in {dir_name}"
         )
 
-    return {"date": date_str, "content": digest_path.read_text()}
+    digest_path = digest_files[0]
+    return {"date": dir_name, "content": digest_path.read_text()}

@@ -84,7 +84,7 @@ class TestGenerateDigest:
 
     def test_contains_date_header(self, sample_portfolio_summary, sample_snapshot, run_date):
         digest = generate_digest(sample_portfolio_summary, sample_snapshot)
-        assert f"# Market Digest - {run_date.isoformat()}" in digest
+        assert f"# Daily Digest: {run_date.isoformat()}" in digest
 
     def test_contains_position_sections(self, sample_portfolio_summary, sample_snapshot):
         digest = generate_digest(sample_portfolio_summary, sample_snapshot)
@@ -123,3 +123,41 @@ class TestGenerateDigest:
     def test_contains_contrarian_view(self, sample_portfolio_summary, sample_snapshot):
         digest = generate_digest(sample_portfolio_summary, sample_snapshot)
         assert "consensus" in digest.lower()
+
+    def test_contains_llm_indicator_extractive(self, sample_portfolio_summary, sample_snapshot):
+        sample_portfolio_summary.llm_used = False
+        digest = generate_digest(sample_portfolio_summary, sample_snapshot)
+        assert "Summary method:" in digest
+        assert "Extractive" in digest
+
+    def test_contains_llm_indicator_ai(self, sample_portfolio_summary, sample_snapshot):
+        sample_portfolio_summary.llm_used = True
+        digest = generate_digest(sample_portfolio_summary, sample_snapshot)
+        assert "Summary method:" in digest
+        assert "AI-generated" in digest
+
+    def test_contains_per_position_llm_tag(self, sample_portfolio_summary, sample_snapshot):
+        sample_portfolio_summary.position_summaries[0].llm_used = True
+        sample_portfolio_summary.position_summaries[1].llm_used = False
+        digest = generate_digest(sample_portfolio_summary, sample_snapshot)
+        assert "AI" in digest
+        assert "Extractive" in digest
+
+    def test_am_pm_label_in_header(self, sample_snapshot, run_date):
+        summary = PortfolioSummary(
+            date=run_date,
+            run_label="AM",
+            position_summaries=[],
+        )
+        digest = generate_digest(summary, sample_snapshot)
+        assert f"# Daily Digest: {run_date.isoformat()} AM" in digest
+
+    def test_no_label_in_header(self, sample_snapshot, run_date):
+        summary = PortfolioSummary(
+            date=run_date,
+            run_label="",
+            position_summaries=[],
+        )
+        digest = generate_digest(summary, sample_snapshot)
+        header_line = digest.split("\n")[0]
+        assert header_line == f"# Daily Digest: {run_date.isoformat()}"

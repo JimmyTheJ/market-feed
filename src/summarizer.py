@@ -99,6 +99,7 @@ def summarize_for_position(
     risks: list[str] = []
     bullish_factors: list[str] = []
     bearish_factors: list[str] = []
+    llm_used = False
 
     if use_ollama and top_articles:
         article_texts = "\n".join(
@@ -122,6 +123,7 @@ def summarize_for_position(
 
         result = _call_ollama(prompt)
         if result:
+            llm_used = True
             parsed = _parse_structured_response(result)
 
             bias = parsed.get("NET_BIAS", "").lower()
@@ -166,6 +168,7 @@ def summarize_for_position(
         risks=risks,
         bullish_factors=bullish_factors,
         bearish_factors=bearish_factors,
+        llm_used=llm_used,
     )
 
 
@@ -174,12 +177,16 @@ def generate_portfolio_summary(
     positions: list[EnrichedPosition],
     scored_articles: list[ScoredArticle],
     use_ollama: bool = True,
+    run_label: str = "",
 ) -> PortfolioSummary:
     """Generate a complete portfolio summary."""
     # Per-position summaries
     position_summaries = [
         summarize_for_position(pos, scored_articles, use_ollama) for pos in positions
     ]
+
+    # Track if any LLM call succeeded
+    any_llm_used = any(ps.llm_used for ps in position_summaries)
 
     # Collect all themes
     all_themes: set[str] = set()
@@ -199,6 +206,7 @@ def generate_portfolio_summary(
 
     # Contrarian views
     contrarian_views: list[str] = []
+    contrarian_llm_used = False
     if use_ollama and position_summaries:
         bullish_tickers = [
             ps.ticker for ps in position_summaries if ps.net_bias == "bullish"
@@ -211,6 +219,7 @@ def generate_portfolio_summary(
             )
             result = _call_ollama(prompt)
             if result:
+                contrarian_llm_used = True
                 contrarian_views.append(result)
 
     if not contrarian_views:
@@ -232,10 +241,12 @@ def generate_portfolio_summary(
 
     return PortfolioSummary(
         date=run_date,
+        run_label=run_label,
         top_themes=sorted(all_themes)[:10],
         top_signals=top_signals,
         position_summaries=position_summaries,
         contrarian_views=contrarian_views,
         what_matters=what_matters,
         what_is_noise=what_is_noise,
+        llm_used=any_llm_used or contrarian_llm_used,
     )
