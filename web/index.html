@@ -1035,7 +1035,32 @@
         const API = window.location.origin;
         let authEnabled = false;
         let currentUser = null;
-        let currentProfile = null;  // { id, name, username, default_currency }
+        let currentProfile = null;  // { id, name, username, default_currency, scheduler_enabled, use_ollama }
+
+        // ── Profile helpers ─────────────────────────────────────────────
+
+        async function restoreProfile(profileId) {
+            // Always re-fetch from the server so we never show stale cached data.
+            try {
+                const res = await apiFetch(API + `/api/profiles/${profileId}`);
+                if (!res.ok) {
+                    localStorage.removeItem('selectedProfile');
+                    showProfileSelector();
+                    return;
+                }
+                const data = await res.json();
+                currentProfile = data.profile;
+                displayCurrency = currentProfile.default_currency || 'USD';
+                localStorage.setItem('selectedProfile', JSON.stringify(currentProfile));
+                updateProfileBadge();
+                loadPositions();
+                loadSchedule();
+                refreshPipelineSettings();
+            } catch (e) {
+                localStorage.removeItem('selectedProfile');
+                showProfileSelector();
+            }
+        }
 
         function profileParam() {
             return currentProfile ? `profile=${encodeURIComponent(currentProfile.id)}` : '';
@@ -1114,15 +1139,12 @@
                     currentUser = data.user;
                     hideLogin();
                     showUserBadge(data.user);
-                    // Check for saved profile
+                    // Re-fetch the profile from the server rather than trusting the cached object.
                     const saved = localStorage.getItem('selectedProfile');
                     if (saved) {
                         try {
-                            currentProfile = JSON.parse(saved);
-                            displayCurrency = currentProfile.default_currency || 'USD';
-                            updateProfileBadge();
-                            loadPositions();
-                            loadSchedule();
+                            const { id } = JSON.parse(saved);
+                            restoreProfile(id);
                         } catch (e) {
                             localStorage.removeItem('selectedProfile');
                             showProfileSelector();
@@ -2233,15 +2255,12 @@
         checkAuth().then(authenticated => {
             if (!authenticated) return;
 
-            // Restore saved profile from localStorage
+            // Re-fetch the profile from the server; localStorage only remembers the ID.
             const saved = localStorage.getItem('selectedProfile');
             if (saved) {
                 try {
-                    currentProfile = JSON.parse(saved);
-                    displayCurrency = currentProfile.default_currency || 'USD';
-                    updateProfileBadge();
-                    loadPositions();
-                    loadSchedule();
+                    const { id } = JSON.parse(saved);
+                    restoreProfile(id);
                 } catch (e) {
                     localStorage.removeItem('selectedProfile');
                     showProfileSelector();
