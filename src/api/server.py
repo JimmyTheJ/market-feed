@@ -47,6 +47,7 @@ from ..profile_manager import (
     delete_profile,
     get_profile,
     list_profiles,
+    update_profile_settings,
 )
 
 load_dotenv()
@@ -58,20 +59,37 @@ scheduler = AsyncIOScheduler()
 
 
 def scheduled_pipeline_run(run_label: str = ""):
-    """Run the pipeline on schedule."""
+    """Run the pipeline on schedule for all profiles with scheduling enabled."""
     label_display = f" ({run_label})" if run_label else ""
-    logger.info(f"Scheduled pipeline run{label_display} starting...")
-    try:
-        use_ollama = os.getenv("USE_OLLAMA", "true").lower() == "true"
+    profiles = list_profiles()
+    enabled = [p for p in profiles if p.get("scheduler_enabled", True)]
+
+    if not enabled:
+        logger.info(f"Scheduled run{label_display}: no profiles with scheduling enabled")
+        return
+
+    for profile in enabled:
+        profile_id = profile["id"]
+        use_ollama = profile.get("use_ollama", True)
         output_base = os.getenv("OUTPUT_BASE_PATH", "output")
-        result = run_pipeline(
-            output_base=output_base,
-            use_ollama=use_ollama,
-            run_label=run_label,
+        logger.info(
+            f"Scheduled pipeline run{label_display} for profile '{profile_id}'..."
         )
-        logger.info(f"Scheduled run{label_display} complete: {result}")
-    except Exception as e:
-        logger.error(f"Scheduled run{label_display} failed: {e}", exc_info=True)
+        try:
+            result = run_pipeline(
+                output_base=output_base,
+                use_ollama=use_ollama,
+                run_label=run_label,
+                profile=profile_id,
+            )
+            logger.info(
+                f"Scheduled run{label_display} for '{profile_id}' complete: {result}"
+            )
+        except Exception as e:
+            logger.error(
+                f"Scheduled run{label_display} for '{profile_id}' failed: {e}",
+                exc_info=True,
+            )
 
 
 def _load_schedule_config() -> tuple[list[dict], str]:
@@ -182,6 +200,11 @@ class ProfileCreate(BaseModel):
     name: str
     username: str = ""
     default_currency: str = "USD"
+
+
+class ProfileSettingsUpdate(BaseModel):
+    scheduler_enabled: Optional[bool] = None
+    use_ollama: Optional[bool] = None
 
 
 class PipelineRunRequest(BaseModel):
@@ -561,6 +584,24 @@ async def remove_profile(profile_id: str, user: dict = Depends(require_auth)):
     if not delete_profile(profile_id):
         raise HTTPException(status_code=404, detail=f"Profile '{profile_id}' not found")
     return {"status": "deleted", "profile_id": profile_id}
+
+
+@app.patch("/api/profiles/{profile_id}/settings")
+async def update_profile_pipeline_settings(
+    profile_id: str,
+    body: ProfileSettingsUpdate,
+    user: dict = Depends(require_auth),
+):
+    """Update pipeline settings (scheduler_enabled, use_ollama) for a profile."""
+    settings = {}
+    if body.scheduler_enabled is not None:
+        settings["scheduler_enabled"] = body.scheduler_enabled
+    if body.use_ollama is not None:
+        settings["use_ollama"] = body.use_ollama
+    updated = update_profile_settings(profile_id, settings)
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Profile '{profile_id}' not found")
+    return {"status": "updated", "profile": updated}
 
 
 @app.post("/api/pipeline/run")

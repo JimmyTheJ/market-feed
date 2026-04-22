@@ -81,6 +81,8 @@ def create_profile(name: str, username: str = "", default_currency: str = "USD")
         "name": name.strip(),
         "username": username.strip(),
         "default_currency": default_currency.upper().strip(),
+        "scheduler_enabled": True,
+        "use_ollama": True,
     }
 
     # Create profile config directory and copy defaults
@@ -124,6 +126,25 @@ def delete_profile(profile_id: str) -> bool:
     _save_index(new_profiles)
     logger.info(f"Deleted profile '{profile_id}'")
     return True
+
+
+def update_profile_settings(profile_id: str, settings: dict) -> dict | None:
+    """Update pipeline settings for a profile.
+
+    Only updates allowed keys: scheduler_enabled, use_ollama.
+    Returns the updated profile dict, or None if not found.
+    """
+    allowed = {"scheduler_enabled", "use_ollama"}
+    profiles = _load_index()
+    for i, p in enumerate(profiles):
+        if p["id"] == profile_id:
+            for k, v in settings.items():
+                if k in allowed:
+                    profiles[i][k] = v
+            _save_index(profiles)
+            logger.info(f"Updated settings for profile '{profile_id}': {settings}")
+            return profiles[i]
+    return None
 
 
 def get_profile_config_dir(profile_id: str) -> Path:

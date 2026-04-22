@@ -978,6 +978,33 @@
                 <div id="run-result" style="margin-top: 12px; font-size: 13px; display: none;"></div>
             </div>
 
+            <div class="card" id="pipeline-settings-card" style="display:none">
+                <h2>Pipeline Settings</h2>
+                <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 16px;">
+                    Configure automatic digest generation for this profile.
+                </p>
+                <div style="display:flex;gap:32px;flex-wrap:wrap">
+                    <div>
+                        <div style="font-weight:600;margin-bottom:8px;font-size:14px">Scheduled Digest</div>
+                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:6px;font-size:14px">
+                            <input type="radio" name="scheduler-enabled" value="on" onchange="updatePipelineSettings()"> On
+                        </label>
+                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px">
+                            <input type="radio" name="scheduler-enabled" value="off" onchange="updatePipelineSettings()"> Off
+                        </label>
+                    </div>
+                    <div>
+                        <div style="font-weight:600;margin-bottom:8px;font-size:14px">Summary Mode</div>
+                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:6px;font-size:14px">
+                            <input type="radio" name="summary-mode" value="ai" onchange="updatePipelineSettings()"> AI
+                        </label>
+                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px">
+                            <input type="radio" name="summary-mode" value="extractive" onchange="updatePipelineSettings()"> Extractive
+                        </label>
+                    </div>
+                </div>
+            </div>
+
             <div class="card">
                 <h2>Schedule</h2>
                 <div id="schedule-info" style="font-size: 14px; color: var(--text-muted);">
@@ -1201,6 +1228,7 @@
             updateProfileBadge();
             loadPositions();
             loadSchedule();
+            refreshPipelineSettings();
         }
 
         async function createProfile() {
@@ -1818,6 +1846,7 @@
         }
 
         async function loadSchedule() {
+            refreshPipelineSettings();
             try {
                 const res = await apiFetch(API + '/api/pipeline/status');
                 const data = await res.json();
@@ -1836,6 +1865,46 @@
                     data.scheduler_running ? 'var(--green)' : 'var(--text-muted)';
             } catch (e) {
                 document.getElementById('schedule-info').textContent = 'Could not load schedule info';
+            }
+        }
+
+        function refreshPipelineSettings() {
+            const card = document.getElementById('pipeline-settings-card');
+            if (!currentProfile) {
+                card.style.display = 'none';
+                return;
+            }
+            card.style.display = 'block';
+            const schedulerEnabled = currentProfile.scheduler_enabled !== false;
+            const useOllama = currentProfile.use_ollama !== false;
+            document.querySelectorAll('input[name="scheduler-enabled"]').forEach(r => {
+                r.checked = (r.value === 'on') === schedulerEnabled;
+            });
+            document.querySelectorAll('input[name="summary-mode"]').forEach(r => {
+                r.checked = (r.value === 'ai') === useOllama;
+            });
+        }
+
+        async function updatePipelineSettings() {
+            if (!currentProfile) return;
+            const schedulerEnabled = document.querySelector('input[name="scheduler-enabled"]:checked')?.value === 'on';
+            const useOllama = document.querySelector('input[name="summary-mode"]:checked')?.value === 'ai';
+            try {
+                const res = await apiFetch(API + `/api/profiles/${currentProfile.id}/settings`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ scheduler_enabled: schedulerEnabled, use_ollama: useOllama }),
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    currentProfile = data.profile;
+                    localStorage.setItem('selectedProfile', JSON.stringify(currentProfile));
+                    showToast('Settings saved');
+                } else {
+                    showToast('Failed to save settings', 'error');
+                }
+            } catch (e) {
+                showToast('Network error', 'error');
             }
         }
 
