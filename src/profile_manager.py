@@ -83,6 +83,7 @@ def create_profile(name: str, username: str = "", default_currency: str = "USD")
         "default_currency": default_currency.upper().strip(),
         "scheduler_enabled": True,
         "use_ollama": True,
+        "ollama_model": None,
     }
 
     # Create profile config directory and copy defaults
@@ -131,10 +132,10 @@ def delete_profile(profile_id: str) -> bool:
 def update_profile_settings(profile_id: str, settings: dict) -> dict | None:
     """Update pipeline settings for a profile.
 
-    Only updates allowed keys: scheduler_enabled, use_ollama.
+    Only updates allowed keys: scheduler_enabled, use_ollama, ollama_model.
     Returns the updated profile dict, or None if not found.
     """
-    allowed = {"scheduler_enabled", "use_ollama"}
+    allowed = {"scheduler_enabled", "use_ollama", "ollama_model"}
     profiles = _load_index()
     for i, p in enumerate(profiles):
         if p["id"] == profile_id:

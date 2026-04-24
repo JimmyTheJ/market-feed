@@ -1002,6 +1002,16 @@
                             <input type="radio" name="summary-mode" value="extractive" onchange="updatePipelineSettings()"> Extractive
                         </label>
                     </div>
+                    <div>
+                        <div style="font-weight:600;margin-bottom:8px;font-size:14px">Ollama Model</div>
+                        <div style="display:flex;align-items:center;gap:8px">
+                            <select id="ollama-model-select" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:14px;min-width:160px" onchange="updatePipelineSettings()">
+                                <option value="">Default</option>
+                            </select>
+                            <button class="btn" style="padding:6px 12px;font-size:13px" onclick="loadOllamaModels()" title="Refresh model list">↻</button>
+                        </div>
+                        <div id="ollama-model-status" style="font-size:12px;color:var(--text-muted);margin-top:6px"></div>
+                    </div>
                 </div>
             </div>
 
@@ -1246,6 +1256,9 @@
             currentProfile = p;
             displayCurrency = p.default_currency || 'USD';
             localStorage.setItem('selectedProfile', JSON.stringify(p));
+            // Reset model dropdown so it reloads for the new profile
+            const sel = document.getElementById('ollama-model-select');
+            if (sel) { sel.dataset.loaded = ''; sel.dataset.savedModel = p.ollama_model || ''; }
             hideProfileSelector();
             updateProfileBadge();
             loadPositions();
@@ -1905,17 +1918,53 @@
             document.querySelectorAll('input[name="summary-mode"]').forEach(r => {
                 r.checked = (r.value === 'ai') === useOllama;
             });
+            // Restore saved model selection (models loaded async)
+            const savedModel = currentProfile.ollama_model || '';
+            const sel = document.getElementById('ollama-model-select');
+            // Set after models load; pre-set value so loadOllamaModels can match it
+            sel.dataset.savedModel = savedModel;
+            if (!sel.dataset.loaded) loadOllamaModels();
+        }
+
+        async function loadOllamaModels() {
+            const sel = document.getElementById('ollama-model-select');
+            const status = document.getElementById('ollama-model-status');
+            status.textContent = 'Loading models…';
+            try {
+                const res = await apiFetch(API + '/api/ollama/models');
+                const data = await res.json();
+                const savedModel = sel.dataset.savedModel || currentProfile?.ollama_model || '';
+                sel.innerHTML = '<option value="">Default</option>';
+                (data.models || []).forEach(m => {
+                    const opt = document.createElement('option');
+                    opt.value = m;
+                    opt.textContent = m;
+                    if (m === savedModel) opt.selected = true;
+                    sel.appendChild(opt);
+                });
+                sel.dataset.loaded = '1';
+                if (data.error) {
+                    status.textContent = `Ollama unreachable: ${data.error}`;
+                } else if (data.models.length === 0) {
+                    status.textContent = 'No models found';
+                } else {
+                    status.textContent = `${data.models.length} model(s) available`;
+                }
+            } catch (e) {
+                status.textContent = 'Could not load models';
+            }
         }
 
         async function updatePipelineSettings() {
             if (!currentProfile) return;
             const schedulerEnabled = document.querySelector('input[name="scheduler-enabled"]:checked')?.value === 'on';
             const useOllama = document.querySelector('input[name="summary-mode"]:checked')?.value === 'ai';
+            const ollamaModel = document.getElementById('ollama-model-select')?.value || null;
             try {
                 const res = await apiFetch(API + `/api/profiles/${currentProfile.id}/settings`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ scheduler_enabled: schedulerEnabled, use_ollama: useOllama }),
+                    body: JSON.stringify({ scheduler_enabled: schedulerEnabled, use_ollama: useOllama, ollama_model: ollamaModel }),
                 });
                 if (res.ok) {
                     const data = await res.json();

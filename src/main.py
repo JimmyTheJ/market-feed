@@ -62,6 +62,7 @@ def run_pipeline(
     metadata_path: str | None = None,
     output_base: str = "output",
     use_ollama: bool = True,
+    ollama_model: str | None = None,
     profile: str | None = None,
     run_label: str = "",
 ) -> dict:
@@ -182,6 +183,7 @@ def run_pipeline(
     log("Generating portfolio summary...")
     summary = generate_portfolio_summary(
         run_date, enriched, scored, use_ollama, run_label=run_label,
+        ollama_model=ollama_model,
     )
     log("Generated portfolio summary")
 

@@ -24,6 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
+import httpx
 import yaml
 
 from ..auth.middleware import (
@@ -71,6 +72,7 @@ def scheduled_pipeline_run(run_label: str = ""):
     for profile in enabled:
         profile_id = profile["id"]
         use_ollama = profile.get("use_ollama", True)
+        ollama_model = profile.get("ollama_model") or None
         output_base = os.getenv("OUTPUT_BASE_PATH", "output")
         logger.info(
             f"Scheduled pipeline run{label_display} for profile '{profile_id}'..."
@@ -79,6 +81,7 @@ def scheduled_pipeline_run(run_label: str = ""):
             result = run_pipeline(
                 output_base=output_base,
                 use_ollama=use_ollama,
+                ollama_model=ollama_model,
                 run_label=run_label,
                 profile=profile_id,
             )
@@ -205,6 +208,7 @@ class ProfileCreate(BaseModel):
 class ProfileSettingsUpdate(BaseModel):
     scheduler_enabled: Optional[bool] = None
     use_ollama: Optional[bool] = None
+    ollama_model: Optional[str] = None
 
 
 class PipelineRunRequest(BaseModel):
@@ -592,12 +596,14 @@ async def update_profile_pipeline_settings(
     body: ProfileSettingsUpdate,
     user: dict = Depends(require_auth),
 ):
-    """Update pipeline settings (scheduler_enabled, use_ollama) for a profile."""
+    """Update pipeline settings (scheduler_enabled, use_ollama, ollama_model) for a profile."""
     settings = {}
     if body.scheduler_enabled is not None:
         settings["scheduler_enabled"] = body.scheduler_enabled
     if body.use_ollama is not None:
         settings["use_ollama"] = body.use_ollama
+    if body.ollama_model is not None:
+        settings["ollama_model"] = body.ollama_model
     updated = update_profile_settings(profile_id, settings)
     if not updated:
         raise HTTPException(status_code=404, detail=f"Profile '{profile_id}' not found")
@@ -614,10 +620,17 @@ async def trigger_pipeline(
     try:
         run_date = date.fromisoformat(request.date) if request.date else None
         output_base = os.getenv("OUTPUT_BASE_PATH", "output")
+        # Pick up the profile's configured model if no override in the request
+        ollama_model: str | None = None
+        if profile:
+            profile_data = get_profile(profile)
+            if profile_data:
+                ollama_model = profile_data.get("ollama_model") or None
         result = run_pipeline(
             run_date=run_date,
             output_base=output_base,
             use_ollama=request.use_ollama,
+            ollama_model=ollama_model,
             profile=profile,
             run_label=request.run_label,
         )
@@ -644,7 +657,20 @@ async def pipeline_status(user: dict = Depends(require_auth)):
     }
 
 
-@app.get("/api/outputs")
+@app.get("/api/ollama/models")
+async def list_ollama_models(user: dict = Depends(require_auth)):
+    """Fetch available models from the local Ollama instance."""
+    base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f"{base_url}/api/tags")
+        response.raise_for_status()
+        data = response.json()
+        models = [m["name"] for m in data.get("models", [])]
+        return {"models": models, "base_url": base_url}
+    except Exception as e:
+        logger.warning(f"Could not reach Ollama at {base_url}: {e}")
+        return {"models": [], "base_url": base_url, "error": str(e)}
 async def list_outputs(
     profile: str | None = None,
     user: dict = Depends(require_auth),

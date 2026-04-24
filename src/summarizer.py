@@ -20,21 +20,23 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
-def _get_ollama_config() -> tuple[str, str]:
-    """Get Ollama configuration from environment."""
+def _get_ollama_config(model: str | None = None) -> tuple[str, str]:
+    """Get Ollama configuration from environment, with optional model override."""
     base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    model = os.getenv("OLLAMA_MODEL", "llama3.2")
-    return base_url, model
+    default_model = os.getenv("OLLAMA_MODEL", "llama3.2")
+    return base_url, model or default_model
 
 
-def _call_ollama(prompt: str, timeout: float = 120.0) -> str | None:
+def _call_ollama(
+    prompt: str, timeout: float = 120.0, model: str | None = None
+) -> str | None:
     """Call Ollama API for text generation."""
-    base_url, model = _get_ollama_config()
+    base_url, resolved_model = _get_ollama_config(model)
     try:
         response = httpx.post(
             f"{base_url}/api/generate",
             json={
-                "model": model,
+                "model": resolved_model,
                 "prompt": prompt,
                 "stream": False,
                 "options": {"temperature": 0.3, "num_predict": 500},
@@ -79,6 +81,7 @@ def summarize_for_position(
     position: EnrichedPosition,
     scored_articles: list[ScoredArticle],
     use_ollama: bool = True,
+    ollama_model: str | None = None,
 ) -> PositionSummary:
     """Generate a summary for a single position."""
     # Filter and rank articles relevant to this position
@@ -121,12 +124,8 @@ def summarize_for_position(
             "RISKS: [comma-separated risks, or none]"
         )
 
-        result = _call_ollama(prompt)
+        result = _call_ollama(prompt, model=ollama_model)
         if result:
-            llm_used = True
-            parsed = _parse_structured_response(result)
-
-            bias = parsed.get("NET_BIAS", "").lower()
             if bias in ("bullish", "bearish", "mixed", "neutral"):
                 net_bias = bias
 
@@ -178,11 +177,13 @@ def generate_portfolio_summary(
     scored_articles: list[ScoredArticle],
     use_ollama: bool = True,
     run_label: str = "",
+    ollama_model: str | None = None,
 ) -> PortfolioSummary:
     """Generate a complete portfolio summary."""
     # Per-position summaries
     position_summaries = [
-        summarize_for_position(pos, scored_articles, use_ollama) for pos in positions
+        summarize_for_position(pos, scored_articles, use_ollama, ollama_model)
+        for pos in positions
     ]
 
     # Track if any LLM call succeeded
@@ -217,7 +218,7 @@ def generate_portfolio_summary(
                 f"Briefly state one strong bearish counterargument for holding "
                 f"{tickers_str} today. Keep it to 1-2 sentences."
             )
-            result = _call_ollama(prompt)
+            result = _call_ollama(prompt, model=ollama_model)
             if result:
                 contrarian_llm_used = True
                 contrarian_views.append(result)
