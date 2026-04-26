@@ -671,6 +671,9 @@ async def list_ollama_models(user: dict = Depends(require_auth)):
     except Exception as e:
         logger.warning(f"Could not reach Ollama at {base_url}: {e}")
         return {"models": [], "base_url": base_url, "error": str(e)}
+
+
+@app.get("/api/outputs")
 async def list_outputs(
     profile: str | None = None,
     user: dict = Depends(require_auth),
