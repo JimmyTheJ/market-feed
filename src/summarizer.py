@@ -6,6 +6,7 @@ Falls back to extractive summaries when Ollama is unavailable.
 
 import logging
 import os
+import re
 from datetime import date
 
 import httpx
@@ -27,29 +28,43 @@ def _get_ollama_config(model: str | None = None) -> tuple[str, str]:
     return base_url, model or default_model
 
 
+def _strip_thinking(text: str) -> str:
+    """Remove <think>...</think> blocks emitted by reasoning models (e.g. Qwen3)."""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+
 def _call_ollama(
     prompt: str, timeout: float = 120.0, model: str | None = None
 ) -> str | None:
-    """Call Ollama API for text generation."""
+    """Call Ollama chat API for text generation.
+
+    Uses /api/chat (not /api/generate) so the model's chat template is applied
+    correctly. Instruction-tuned models like Qwen3 return empty responses from
+    /api/generate because they expect the chat-formatted prompt.
+    """
     base_url, resolved_model = _get_ollama_config(model)
     logger.info(f"Calling Ollama: model={resolved_model!r} url={base_url}")
     try:
         response = httpx.post(
-            f"{base_url}/api/generate",
+            f"{base_url}/api/chat",
             json={
                 "model": resolved_model,
-                "prompt": prompt,
+                "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
                 "options": {"temperature": 0.3, "num_predict": 500},
             },
             timeout=timeout,
         )
         response.raise_for_status()
-        result = response.json().get("response", "").strip()
+        # /api/chat response: {"message": {"role": "assistant", "content": "..."}, ...}
+        data = response.json()
+        raw = data.get("message", {}).get("content") or ""
+        result = _strip_thinking(raw)
         logger.info(f"Ollama response received ({len(result)} chars)")
-        return result
+        return result or None
     except Exception as e:
         logger.warning(f"Ollama call failed (model={resolved_model!r}): {type(e).__name__}: {e}")
+        return None
         return None
 
 
