@@ -744,3 +744,32 @@ async def get_digest(
 
     digest_path = digest_files[0]
     return {"date": dir_name, "content": digest_path.read_text()}
+
+
+@app.delete("/api/outputs/{dir_name}")
+async def delete_output(
+    dir_name: str,
+    profile: str | None = None,
+    user: dict = Depends(require_auth),
+):
+    """Delete an output directory and all its contents."""
+    import shutil
+
+    output_base = Path(os.getenv("OUTPUT_BASE_PATH", "output"))
+    if profile:
+        output_base = output_base / profile
+    output_dir = output_base / dir_name
+
+    if not output_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Output not found: {dir_name}")
+
+    # Safety check: only delete directories that look like pipeline outputs
+    if "-analysis" not in dir_name:
+        raise HTTPException(status_code=400, detail="Invalid output directory name")
+
+    try:
+        shutil.rmtree(output_dir)
+        logger.info(f"Deleted output directory: {output_dir}")
+        return {"status": "deleted", "dir_name": dir_name}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete: {e}")

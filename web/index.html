@@ -1866,7 +1866,8 @@
                 const data = await res.json();
                 if (res.ok) {
                     result.style.color = 'var(--green)';
-                    result.textContent = `✓ Complete — ${data.articles_scored || 0} articles scored, ${data.positions_count || 0} positions analyzed in ${data.elapsed_seconds || 0}s`;
+                    const llmNote = data.llm_used === false ? ' · ⚠ LLM not used (check server logs)' : data.llm_used ? ' · ✓ LLM used' : '';
+                    result.textContent = `✓ Complete — ${data.articles_scored || 0} articles scored, ${data.positions_count || 0} positions analyzed in ${data.elapsed_seconds || 0}s${llmNote}`;
                     showToast('Pipeline complete!');
                 } else {
                     result.style.color = 'var(--red)';
@@ -1996,9 +1997,12 @@
                     const datePart = parts.slice(0, 3).join('-');
                     const label = parts.length > 3 ? parts.slice(3).join('-').toUpperCase() : '';
                     const display = label ? `${datePart} ${label}` : datePart;
-                    return `<li class="output-item">
+                    return `<li class="output-item" id="output-item-${dir}">
                         <span class="output-date">${display}</span>
-                        <button class="btn btn-small" onclick="loadDigest('${dir}')">View Digest</button>
+                        <div style="display:flex;gap:6px">
+                            <button class="btn btn-small" onclick="loadDigest('${dir}')">View Digest</button>
+                            <button class="btn btn-small btn-danger" onclick="deleteDigest('${dir}')" title="Delete this output">✕</button>
+                        </div>
                     </li>`;
                 }).join('');
             } catch (e) {
@@ -2022,6 +2026,30 @@
                 content.innerHTML = markdownToHtml(data.content);
             } catch (e) {
                 content.textContent = 'Failed to load digest.';
+            }
+        }
+
+        async function deleteDigest(dirName) {
+            if (!confirm(`Delete output "${dirName}"? This cannot be undone.`)) return;
+            try {
+                const res = await apiFetch(apiUrl(`/api/outputs/${dirName}`), { method: 'DELETE' });
+                if (res.ok) {
+                    // Remove from list
+                    const item = document.getElementById(`output-item-${dirName}`);
+                    if (item) item.remove();
+                    // Hide digest card if it was showing this output
+                    const card = document.getElementById('digest-card');
+                    const title = document.getElementById('digest-title');
+                    if (card.style.display !== 'none' && title.textContent.includes(dirName.replace('-analysis', '').replace(/-/g, ' '))) {
+                        card.style.display = 'none';
+                    }
+                    showToast('Output deleted');
+                } else {
+                    const data = await res.json();
+                    showToast(`Failed to delete: ${data.detail || 'unknown error'}`, 'error');
+                }
+            } catch (e) {
+                showToast('Network error deleting output', 'error');
             }
         }
 

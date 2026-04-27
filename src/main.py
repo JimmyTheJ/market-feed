@@ -209,6 +209,7 @@ def run_pipeline(
         "articles_normalized": len(normalized),
         "articles_scored": len(scored),
         "elapsed_seconds": round(elapsed, 1),
+        "llm_used": summary.llm_used,
     }
 
 

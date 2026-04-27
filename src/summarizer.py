@@ -32,6 +32,7 @@ def _call_ollama(
 ) -> str | None:
     """Call Ollama API for text generation."""
     base_url, resolved_model = _get_ollama_config(model)
+    logger.info(f"Calling Ollama: model={resolved_model!r} url={base_url}")
     try:
         response = httpx.post(
             f"{base_url}/api/generate",
@@ -44,9 +45,11 @@ def _call_ollama(
             timeout=timeout,
         )
         response.raise_for_status()
-        return response.json().get("response", "").strip()
+        result = response.json().get("response", "").strip()
+        logger.info(f"Ollama response received ({len(result)} chars)")
+        return result
     except Exception as e:
-        logger.warning(f"Ollama call failed: {e}")
+        logger.warning(f"Ollama call failed (model={resolved_model!r}): {type(e).__name__}: {e}")
         return None
 
 
