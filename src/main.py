@@ -47,12 +47,31 @@ logger = logging.getLogger(__name__)
 
 
 def setup_logging(log_level: str = "INFO") -> None:
-    """Configure logging for the pipeline."""
-    logging.basicConfig(
-        level=getattr(logging, log_level.upper(), logging.INFO),
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        handlers=[logging.StreamHandler(sys.stdout)],
-    )
+    """Configure logging for the pipeline.
+
+    Always writes to stdout. Also writes to logs/market-pipeline.log when the
+    logs/ directory exists (it is volume-mounted in Docker).
+    """
+    from logging.handlers import RotatingFileHandler
+
+    level = getattr(logging, log_level.upper(), logging.INFO)
+    fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+
+    log_dir = Path(os.getenv("LOG_DIR", "logs"))
+    if log_dir.exists():
+        log_file = log_dir / "market-pipeline.log"
+        file_handler = RotatingFileHandler(
+            log_file,
+            maxBytes=5 * 1024 * 1024,  # 5 MB per file
+            backupCount=5,
+            encoding="utf-8",
+        )
+        file_handler.setFormatter(logging.Formatter(fmt))
+        handlers.append(file_handler)
+
+    logging.basicConfig(level=level, format=fmt, handlers=handlers)
 
 
 def run_pipeline(

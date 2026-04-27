@@ -30,6 +30,7 @@ services:
       - PIPELINE_RUN_MINUTE=${PIPELINE_RUN_MINUTE:-30}
       - PIPELINE_TIMEZONE=${PIPELINE_TIMEZONE:-America/New_York}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_DIR=logs
       # Auth
       - AUTH_ENABLED=${AUTH_ENABLED:-false}
       - JWT_SECRET=${JWT_SECRET:-change-this-to-a-random-secret}
