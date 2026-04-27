@@ -43,9 +43,10 @@ def _call_ollama(
     """Call Ollama chat API for text generation.
 
     Uses /api/chat so the model's chat template is applied correctly.
-    Sets think=False in options to disable Qwen3 reasoning mode (ignored by
-    models that don't support it). Falls back to _strip_thinking() as a
-    safety net in case a model still emits <think> blocks.
+    Sets think=False as a top-level request field (the correct location per
+    Ollama's API) to disable Qwen3 reasoning mode. Falls back to
+    _strip_thinking() as a safety net in case a model still emits <think>
+    blocks in message.content.
     """
     base_url, resolved_model = _get_ollama_config(model)
     logger.info(f"Calling Ollama: model={resolved_model!r} url={base_url}")
@@ -54,6 +55,7 @@ def _call_ollama(
             f"{base_url}/api/chat",
             json={
                 "model": resolved_model,
+                "think": False,  # Top-level: disables Qwen3 thinking mode (ignored by other models)
                 "messages": [
                     {
                         "role": "system",
@@ -69,14 +71,21 @@ def _call_ollama(
                 "options": {
                     "temperature": temperature,
                     "num_predict": max_tokens,
-                    "think": False,  # Disables Qwen3 thinking mode; ignored by other models
                 },
             },
             timeout=timeout,
         )
         response.raise_for_status()
         data = response.json()
-        raw = data.get("message", {}).get("content") or ""
+        msg = data.get("message", {})
+        # When thinking mode is active, Ollama may put the answer in message.content
+        # and thinking in message.thinking. Read content; fall back to thinking if empty.
+        raw = msg.get("content") or msg.get("thinking") or ""
+        if not raw:
+            logger.warning(
+                f"Ollama returned empty message: keys={list(msg.keys())}, "
+                f"done_reason={data.get('done_reason')}"
+            )
         result = _strip_thinking(raw)
         if len(raw) != len(result):
             logger.info(f"Stripped thinking block ({len(raw)} raw → {len(result)} chars)")
