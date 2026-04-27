@@ -126,6 +126,10 @@ def summarize_for_position(
 
         result = _call_ollama(prompt, model=ollama_model)
         if result:
+            parsed = _parse_structured_response(result)
+            bias = parsed.get("NET_BIAS", "neutral").lower()
+            llm_used = True
+
             if bias in ("bullish", "bearish", "mixed", "neutral"):
                 net_bias = bias
 

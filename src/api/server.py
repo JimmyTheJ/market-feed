@@ -36,7 +36,7 @@ from ..auth.middleware import (
     get_client_ip,
     require_auth,
 )
-from ..config_loader import resolve_config_path
+from ..config_loader import load_yaml_config, resolve_config_path
 from ..forex_service import get_rates_to
 from ..main import run_pipeline, setup_logging
 from ..market_hours import get_tickers_needing_refresh
@@ -73,6 +73,17 @@ def scheduled_pipeline_run(run_label: str = ""):
         profile_id = profile["id"]
         use_ollama = profile.get("use_ollama", True)
         ollama_model = profile.get("ollama_model") or None
+        # Fall back to profile's settings.yaml summarization config
+        if not ollama_model:
+            try:
+                prof_settings = load_yaml_config(
+                    "settings.yaml", merge_with_defaults=True, profile=profile_id
+                )
+                ollama_model = (
+                    prof_settings.get("summarization", {}).get("ollama_model") or None
+                )
+            except Exception:
+                pass
         output_base = os.getenv("OUTPUT_BASE_PATH", "output")
         logger.info(
             f"Scheduled pipeline run{label_display} for profile '{profile_id}'..."
@@ -626,6 +637,18 @@ async def trigger_pipeline(
             profile_data = get_profile(profile)
             if profile_data:
                 ollama_model = profile_data.get("ollama_model") or None
+                # Fall back to profile's settings.yaml summarization config
+                if not ollama_model:
+                    try:
+                        prof_settings = load_yaml_config(
+                            "settings.yaml", merge_with_defaults=True, profile=profile
+                        )
+                        ollama_model = (
+                            prof_settings.get("summarization", {}).get("ollama_model")
+                            or None
+                        )
+                    except Exception:
+                        pass
         result = run_pipeline(
             run_date=run_date,
             output_base=output_base,
