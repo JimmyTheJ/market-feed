@@ -34,13 +34,18 @@ def _strip_thinking(text: str) -> str:
 
 
 def _call_ollama(
-    prompt: str, timeout: float = 120.0, model: str | None = None
+    prompt: str,
+    timeout: float = 120.0,
+    model: str | None = None,
+    temperature: float = 0.3,
+    max_tokens: int = 2048,
 ) -> str | None:
     """Call Ollama chat API for text generation.
 
-    Uses /api/chat (not /api/generate) so the model's chat template is applied
-    correctly. Instruction-tuned models like Qwen3 return empty responses from
-    /api/generate because they expect the chat-formatted prompt.
+    Uses /api/chat so the model's chat template is applied correctly.
+    Sets think=False in options to disable Qwen3 reasoning mode (ignored by
+    models that don't support it). Falls back to _strip_thinking() as a
+    safety net in case a model still emits <think> blocks.
     """
     base_url, resolved_model = _get_ollama_config(model)
     logger.info(f"Calling Ollama: model={resolved_model!r} url={base_url}")
@@ -49,22 +54,36 @@ def _call_ollama(
             f"{base_url}/api/chat",
             json={
                 "model": resolved_model,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a concise financial analyst. "
+                            "Respond only with the requested structured format. "
+                            "Do not include reasoning, preamble, or explanation."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
                 "stream": False,
-                "options": {"temperature": 0.3, "num_predict": 500},
+                "options": {
+                    "temperature": temperature,
+                    "num_predict": max_tokens,
+                    "think": False,  # Disables Qwen3 thinking mode; ignored by other models
+                },
             },
             timeout=timeout,
         )
         response.raise_for_status()
-        # /api/chat response: {"message": {"role": "assistant", "content": "..."}, ...}
         data = response.json()
         raw = data.get("message", {}).get("content") or ""
         result = _strip_thinking(raw)
+        if len(raw) != len(result):
+            logger.info(f"Stripped thinking block ({len(raw)} raw → {len(result)} chars)")
         logger.info(f"Ollama response received ({len(result)} chars)")
         return result or None
     except Exception as e:
         logger.warning(f"Ollama call failed (model={resolved_model!r}): {type(e).__name__}: {e}")
-        return None
         return None
 
 
@@ -100,6 +119,8 @@ def summarize_for_position(
     scored_articles: list[ScoredArticle],
     use_ollama: bool = True,
     ollama_model: str | None = None,
+    ollama_temperature: float = 0.3,
+    ollama_max_tokens: int = 2048,
 ) -> PositionSummary:
     """Generate a summary for a single position."""
     # Filter and rank articles relevant to this position
@@ -142,7 +163,10 @@ def summarize_for_position(
             "RISKS: [comma-separated risks, or none]"
         )
 
-        result = _call_ollama(prompt, model=ollama_model)
+        result = _call_ollama(
+            prompt, model=ollama_model,
+            temperature=ollama_temperature, max_tokens=ollama_max_tokens,
+        )
         if result:
             parsed = _parse_structured_response(result)
             bias = parsed.get("NET_BIAS", "neutral").lower()
@@ -200,11 +224,16 @@ def generate_portfolio_summary(
     use_ollama: bool = True,
     run_label: str = "",
     ollama_model: str | None = None,
+    ollama_temperature: float = 0.3,
+    ollama_max_tokens: int = 2048,
 ) -> PortfolioSummary:
     """Generate a complete portfolio summary."""
     # Per-position summaries
     position_summaries = [
-        summarize_for_position(pos, scored_articles, use_ollama, ollama_model)
+        summarize_for_position(
+            pos, scored_articles, use_ollama, ollama_model,
+            ollama_temperature, ollama_max_tokens,
+        )
         for pos in positions
     ]
 
@@ -240,7 +269,10 @@ def generate_portfolio_summary(
                 f"Briefly state one strong bearish counterargument for holding "
                 f"{tickers_str} today. Keep it to 1-2 sentences."
             )
-            result = _call_ollama(prompt, model=ollama_model)
+            result = _call_ollama(
+                prompt, model=ollama_model,
+                temperature=ollama_temperature, max_tokens=ollama_max_tokens,
+            )
             if result:
                 contrarian_llm_used = True
                 contrarian_views.append(result)

@@ -73,15 +73,18 @@ def scheduled_pipeline_run(run_label: str = ""):
         profile_id = profile["id"]
         use_ollama = profile.get("use_ollama", True)
         ollama_model = profile.get("ollama_model") or None
+        ollama_temperature: float = 0.3
+        ollama_max_tokens: int = 2048
         # Fall back to profile's settings.yaml summarization config
         if not ollama_model:
             try:
                 prof_settings = load_yaml_config(
                     "settings.yaml", merge_with_defaults=True, profile=profile_id
                 )
-                ollama_model = (
-                    prof_settings.get("summarization", {}).get("ollama_model") or None
-                )
+                summarization = prof_settings.get("summarization", {})
+                ollama_model = summarization.get("ollama_model") or None
+                ollama_temperature = float(summarization.get("temperature", 0.3))
+                ollama_max_tokens = int(summarization.get("max_tokens", 2048))
             except Exception:
                 pass
         output_base = os.getenv("OUTPUT_BASE_PATH", "output")
@@ -93,6 +96,8 @@ def scheduled_pipeline_run(run_label: str = ""):
                 output_base=output_base,
                 use_ollama=use_ollama,
                 ollama_model=ollama_model,
+                ollama_temperature=ollama_temperature,
+                ollama_max_tokens=ollama_max_tokens,
                 run_label=run_label,
                 profile=profile_id,
             )
@@ -633,6 +638,8 @@ async def trigger_pipeline(
         output_base = os.getenv("OUTPUT_BASE_PATH", "output")
         # Pick up the profile's configured model if no override in the request
         ollama_model: str | None = None
+        ollama_temperature: float = 0.3
+        ollama_max_tokens: int = 2048
         if profile:
             profile_data = get_profile(profile)
             if profile_data:
@@ -643,10 +650,10 @@ async def trigger_pipeline(
                         prof_settings = load_yaml_config(
                             "settings.yaml", merge_with_defaults=True, profile=profile
                         )
-                        ollama_model = (
-                            prof_settings.get("summarization", {}).get("ollama_model")
-                            or None
-                        )
+                        summarization = prof_settings.get("summarization", {})
+                        ollama_model = summarization.get("ollama_model") or None
+                        ollama_temperature = float(summarization.get("temperature", 0.3))
+                        ollama_max_tokens = int(summarization.get("max_tokens", 2048))
                     except Exception:
                         pass
         result = run_pipeline(
@@ -654,6 +661,8 @@ async def trigger_pipeline(
             output_base=output_base,
             use_ollama=request.use_ollama,
             ollama_model=ollama_model,
+            ollama_temperature=ollama_temperature,
+            ollama_max_tokens=ollama_max_tokens,
             profile=profile,
             run_label=request.run_label,
         )

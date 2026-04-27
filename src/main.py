@@ -82,6 +82,8 @@ def run_pipeline(
     output_base: str = "output",
     use_ollama: bool = True,
     ollama_model: str | None = None,
+    ollama_temperature: float = 0.3,
+    ollama_max_tokens: int = 2048,
     profile: str | None = None,
     run_label: str = "",
 ) -> dict:
@@ -203,6 +205,8 @@ def run_pipeline(
     summary = generate_portfolio_summary(
         run_date, enriched, scored, use_ollama, run_label=run_label,
         ollama_model=ollama_model,
+        ollama_temperature=ollama_temperature,
+        ollama_max_tokens=ollama_max_tokens,
     )
     log("Generated portfolio summary")
 
