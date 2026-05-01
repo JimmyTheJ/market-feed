@@ -3,7 +3,8 @@
 import logging
 import os
 
-from .models import DailyPositionsSnapshot, PortfolioSummary
+from .models import DailyPositionsSnapshot, MarketSummary, PortfolioSummary
+from .summarizer import CATEGORY_META
 
 logger = logging.getLogger(__name__)
 
@@ -119,5 +120,64 @@ def generate_digest(
     for item in summary.what_is_noise:
         lines.append(f"- {item}")
     lines.append("")
+
+    return "\n".join(lines)
+
+
+def generate_general_digest(summary: MarketSummary) -> str:
+    """Generate a General Market Update Markdown digest."""
+    d = summary.date.isoformat()
+    label_suffix = f" {summary.run_label}" if summary.run_label else ""
+    lines: list[str] = []
+
+    lines.append(f"# General Market Update: {d}{label_suffix}")
+    lines.append("")
+
+    if summary.llm_used:
+        model = os.getenv("OLLAMA_MODEL", "llama3.2")
+        lines.append(f"> 🤖 **Summary method:** AI-generated ({model})")
+    else:
+        lines.append("> 📋 **Summary method:** Extractive (LLM unavailable)")
+    lines.append("")
+
+    total_articles = sum(cs.article_count for cs in summary.category_summaries)
+    lines.append(f"Sources processed: {total_articles} articles across {len(summary.category_summaries)} categories")
+    lines.append("")
+
+    # Macro overview
+    if summary.macro_overview:
+        lines.append("## 🌐 Market Overview")
+        lines.append("")
+        lines.append(summary.macro_overview)
+        lines.append("")
+
+    if summary.key_themes:
+        lines.append("**Key themes today:** " + " · ".join(f"`{t}`" for t in summary.key_themes))
+        lines.append("")
+
+    # Per-category sections
+    for cs in summary.category_summaries:
+        meta = CATEGORY_META.get(cs.category, {"emoji": "📰", "label": cs.category.title()})
+        emoji = meta["emoji"]
+        label = meta["label"]
+
+        lines.append(f"## {emoji} {label}")
+        lines.append(f"*{cs.article_count} articles*")
+        lines.append("")
+
+        if cs.interpretation:
+            lines.append(cs.interpretation)
+            lines.append("")
+
+        if cs.key_points:
+            for point in cs.key_points:
+                lines.append(f"- {point}")
+            lines.append("")
+
+        if cs.top_headlines:
+            lines.append("**Top headlines:**")
+            for headline in cs.top_headlines:
+                lines.append(f"- {headline}")
+            lines.append("")
 
     return "\n".join(lines)

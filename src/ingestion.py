@@ -83,13 +83,28 @@ def _parse_published(entry) -> datetime | None:
     return None
 
 
-def fetch_all_sources(sources: dict, timeout: float = DEFAULT_TIMEOUT) -> list[dict]:
-    """Fetch content from all configured sources."""
+def fetch_all_sources(
+    sources: dict,
+    timeout: float = DEFAULT_TIMEOUT,
+    pipeline_mode: str = "positions",
+) -> list[dict]:
+    """Fetch content from all configured sources.
+
+    When pipeline_mode is 'general', only sources whose 'modes' list includes
+    'general' are fetched.  When 'positions' (or any other value), all enabled
+    sources are fetched regardless of their modes list.
+    """
     all_articles = []
 
     for feed_config in sources.get("rss", []):
         if not feed_config.get("enabled", True):
             continue
+
+        # Apply modes filter for general market mode
+        if pipeline_mode == "general":
+            feed_modes = feed_config.get("modes", ["positions"])
+            if "general" not in feed_modes:
+                continue
 
         url = feed_config.get("url", "")
         if not url:

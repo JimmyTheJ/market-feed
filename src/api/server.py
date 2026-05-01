@@ -231,6 +231,7 @@ class PipelineRunRequest(BaseModel):
     date: Optional[str] = None
     use_ollama: bool = True
     run_label: str = ""
+    pipeline_mode: str = "positions"  # "positions" or "general"
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -665,6 +666,7 @@ async def trigger_pipeline(
             ollama_max_tokens=ollama_max_tokens,
             profile=profile,
             run_label=request.run_label,
+            pipeline_mode=request.pipeline_mode,
         )
         return {"status": "completed", **result}
     except Exception as e:

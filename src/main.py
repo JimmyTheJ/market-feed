@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 
 from .config_loader import resolve_config_path, resolve_data_path
 from .date_utils import today_date
-from .digest_writer import generate_digest
+from .digest_writer import generate_digest, generate_general_digest
 from .forex_service import get_rates_to
 from .ingestion import fetch_all_sources, load_sources
 from .metadata_lookup import enrich_all_positions
@@ -29,7 +29,7 @@ from .models import DailyPositionsSnapshot
 from .normalization import normalize_all
 from .positions_loader import load_positions
 from .price_service import get_option_price, get_prices
-from .scoring import score_and_rank
+from .scoring import score_and_rank, score_for_general_market
 from .storage import (
     ensure_output_dir,
     write_daily_positions,
@@ -39,7 +39,7 @@ from .storage import (
     write_run_log,
     write_summary_payload,
 )
-from .summarizer import generate_portfolio_summary
+from .summarizer import generate_general_market_summary, generate_portfolio_summary
 
 load_dotenv()
 
@@ -86,12 +86,14 @@ def run_pipeline(
     ollama_max_tokens: int = 2048,
     profile: str | None = None,
     run_label: str = "",
+    pipeline_mode: str = "positions",
 ) -> dict:
     """Execute the complete market pipeline.
 
     Paths default to the config_loader resolution (user override → default).
     If profile is provided, config files are resolved from the profile directory.
     run_label (e.g. "AM", "PM") differentiates multiple runs per day.
+    pipeline_mode: "positions" (default) or "general" (General Market Update).
     Returns a dict with run statistics.
     """
     start_time = time.time()
@@ -105,7 +107,7 @@ def run_pipeline(
         logger.info(msg)
 
     label_display = f" ({run_label})" if run_label else ""
-    log(f"=== Market Pipeline Run: {run_date.isoformat()}{label_display} ===")
+    log(f"=== Market Pipeline Run [{pipeline_mode}]: {run_date.isoformat()}{label_display} ===")
 
     # Resolve paths via config_loader if not explicitly provided
     if not positions_path:
@@ -167,6 +169,27 @@ def run_pipeline(
     # Overwrite enriched weights with live-price-computed weights
     for ep, wp in zip(enriched, weighted_positions):
         ep.weight = wp.weight
+    # Propagate option fields from the original Position objects
+    pos_by_ticker: dict[str, object] = {}
+    for p in positions_file.positions:
+        pos_by_ticker[p.ticker] = p
+    for ep in enriched:
+        orig = pos_by_ticker.get(ep.ticker)
+        if orig and getattr(orig, "position_type", "equity") == "option":
+            ep.position_type = "option"
+            direction = getattr(orig, "option_direction", None) or "LONG"
+            opt_type = getattr(orig, "option_type", None) or ""
+            strike = getattr(orig, "strike", None)
+            expiration = getattr(orig, "expiration", None)
+            parts = [ep.ticker]
+            if strike:
+                parts.append(f"${strike:.0f}")
+            if opt_type:
+                parts.append(opt_type)
+            if expiration:
+                parts.append(f"exp {expiration}")
+            parts.append(f"({direction})")
+            ep.option_label = " ".join(parts)
     log(f"Enriched {len(enriched)} positions")
 
     # Step 4: Write daily positions snapshot
@@ -179,7 +202,7 @@ def run_pipeline(
     sources = load_sources(sources_path)
 
     log("Fetching content from sources...")
-    raw_articles = fetch_all_sources(sources)
+    raw_articles = fetch_all_sources(sources, pipeline_mode=pipeline_mode)
     log(f"Fetched {len(raw_articles)} raw articles")
 
     # Step 6: Normalize articles
@@ -195,26 +218,40 @@ def run_pipeline(
     for feed in sources.get("rss", []):
         source_priorities[feed.get("name", "")] = feed.get("priority", 5)
 
-    scored = score_and_rank(normalized, enriched, source_priorities)
+    if pipeline_mode == "general":
+        scored = score_for_general_market(normalized, source_priorities)
+    else:
+        scored = score_and_rank(normalized, enriched, source_priorities)
     log(f"Scored {len(scored)} articles")
 
     write_ranked_articles(output_dir, run_date, scored, run_label)
 
     # Step 8: Summarize
-    log("Generating portfolio summary...")
-    summary = generate_portfolio_summary(
-        run_date, enriched, scored, use_ollama, run_label=run_label,
-        ollama_model=ollama_model,
-        ollama_temperature=ollama_temperature,
-        ollama_max_tokens=ollama_max_tokens,
-    )
-    log("Generated portfolio summary")
+    log("Generating summary...")
+    if pipeline_mode == "general":
+        summary = generate_general_market_summary(
+            run_date, scored, use_ollama, run_label=run_label,
+            ollama_model=ollama_model,
+            ollama_temperature=ollama_temperature,
+            ollama_max_tokens=ollama_max_tokens,
+        )
+    else:
+        summary = generate_portfolio_summary(
+            run_date, enriched, scored, use_ollama, run_label=run_label,
+            ollama_model=ollama_model,
+            ollama_temperature=ollama_temperature,
+            ollama_max_tokens=ollama_max_tokens,
+        )
+    log("Generated summary")
 
     write_summary_payload(output_dir, run_date, summary.model_dump(mode="json"), run_label)
 
     # Step 9: Write digest
     log("Writing market digest...")
-    digest_content = generate_digest(summary, snapshot)
+    if pipeline_mode == "general":
+        digest_content = generate_general_digest(summary)
+    else:
+        digest_content = generate_digest(summary, snapshot)
     write_digest(output_dir, run_date, digest_content, run_label)
     log("Wrote market digest")
 
@@ -226,6 +263,7 @@ def run_pipeline(
     return {
         "date": run_date.isoformat(),
         "run_label": run_label,
+        "pipeline_mode": pipeline_mode,
         "output_dir": str(output_dir),
         "positions_count": len(enriched),
         "articles_fetched": len(raw_articles),

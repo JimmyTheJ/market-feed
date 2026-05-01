@@ -11,7 +11,7 @@ import yaml
 from src.main import run_pipeline
 
 
-def _mock_fetch_all_sources(sources, timeout=30.0):
+def _mock_fetch_all_sources(sources, timeout=30.0, pipeline_mode="positions"):
     """Return mock articles instead of making HTTP requests."""
     return [
         {

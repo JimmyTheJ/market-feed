@@ -220,6 +220,26 @@
 
         .actions-row .btn { flex: 1; text-align: center; }
 
+        .mode-radio-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 7px 14px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: background 0.15s, border-color 0.15s;
+            background: var(--surface);
+            user-select: none;
+        }
+        .mode-radio-label:has(input:checked) {
+            border-color: var(--accent);
+            background: color-mix(in srgb, var(--accent) 15%, var(--surface));
+        }
+        .mode-radio-label input[type=radio] { display: none; }
+
         .digest-content {
             font-size: 14px;
             line-height: 1.6;
@@ -967,6 +987,23 @@
                     Manually trigger a pipeline run. This fetches news, scores relevance,
                     and generates today's market digest.
                 </p>
+                <!-- Mode selector -->
+                <div style="margin-bottom:14px">
+                    <div style="font-weight:600;font-size:13px;margin-bottom:8px;color:var(--text-muted)">MODE</div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap">
+                        <label class="mode-radio-label" id="mode-positions-label">
+                            <input type="radio" name="pipeline-mode" value="positions" checked onchange="updateModeUI()">
+                            📊 Position Analysis
+                        </label>
+                        <label class="mode-radio-label" id="mode-general-label">
+                            <input type="radio" name="pipeline-mode" value="general" onchange="updateModeUI()">
+                            📰 General Market Update
+                        </label>
+                    </div>
+                    <div id="mode-description" style="margin-top:8px;font-size:12px;color:var(--text-muted)">
+                        Fetches all sources, scores articles against your portfolio positions, and generates per-position analysis.
+                    </div>
+                </div>
                 <div class="actions-row">
                     <button class="btn btn-primary" id="run-btn" onclick="runPipeline(true)">
                         Run with AI Summary
@@ -1848,9 +1885,20 @@
 
         // ── Pipeline ────────────────────────────────────────────────────
 
+        function updateModeUI() {
+            const mode = document.querySelector('input[name="pipeline-mode"]:checked')?.value || 'positions';
+            const desc = document.getElementById('mode-description');
+            if (mode === 'general') {
+                desc.textContent = 'Fetches broad authoritative sources only, scores by recency + source quality, and generates a category-by-category market overview.';
+            } else {
+                desc.textContent = 'Fetches all sources, scores articles against your portfolio positions, and generates per-position analysis.';
+            }
+        }
+
         async function runPipeline(useOllama) {
             const btn = document.getElementById('run-btn');
             const result = document.getElementById('run-result');
+            const mode = document.querySelector('input[name="pipeline-mode"]:checked')?.value || 'positions';
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner"></span> Running...';
             result.style.display = 'block';
@@ -1861,13 +1909,14 @@
                 const res = await apiFetch(apiUrl('/api/pipeline/run'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ use_ollama: useOllama })
+                    body: JSON.stringify({ use_ollama: useOllama, pipeline_mode: mode })
                 });
                 const data = await res.json();
                 if (res.ok) {
                     result.style.color = 'var(--green)';
                     const llmNote = data.llm_used === false ? ' · ⚠ LLM not used (check server logs)' : data.llm_used ? ' · ✓ LLM used' : '';
-                    result.textContent = `✓ Complete — ${data.articles_scored || 0} articles scored, ${data.positions_count || 0} positions analyzed in ${data.elapsed_seconds || 0}s${llmNote}`;
+                    const modeNote = data.pipeline_mode === 'general' ? ' · 📰 General Market Update' : ' · 📊 Position Analysis';
+                    result.textContent = `✓ Complete — ${data.articles_scored || 0} articles scored, ${data.positions_count || 0} positions analyzed in ${data.elapsed_seconds || 0}s${llmNote}${modeNote}`;
                     showToast('Pipeline complete!');
                 } else {
                     result.style.color = 'var(--red)';

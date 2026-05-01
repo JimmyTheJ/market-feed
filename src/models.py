@@ -135,6 +135,9 @@ class EnrichedPosition(BaseModel):
     region: str = "us"
     currency: str = "usd"
     notes: str = ""
+    # Option-specific fields propagated from Position
+    position_type: str = "equity"
+    option_label: str = ""  # e.g. "TSLA $300 CALL exp 2026-06-20 (LONG)"
 
 
 class DailyPositionsSnapshot(BaseModel):
@@ -196,4 +199,26 @@ class PortfolioSummary(BaseModel):
     contrarian_views: list[str] = Field(default_factory=list)
     what_matters: list[str] = Field(default_factory=list)
     what_is_noise: list[str] = Field(default_factory=list)
+    llm_used: bool = False
+
+
+class CategorySummary(BaseModel):
+    """Summary for one news category in a General Market Update run."""
+
+    category: str
+    article_count: int = 0
+    top_headlines: list[str] = Field(default_factory=list)
+    interpretation: str = ""
+    key_points: list[str] = Field(default_factory=list)
+    llm_used: bool = False
+
+
+class MarketSummary(BaseModel):
+    """Top-level summary for a General Market Update run."""
+
+    date: date
+    run_label: str = ""
+    category_summaries: list[CategorySummary] = Field(default_factory=list)
+    macro_overview: str = ""
+    key_themes: list[str] = Field(default_factory=list)
     llm_used: bool = False

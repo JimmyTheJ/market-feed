@@ -1,67 +1,45 @@
 # Market Pipeline - News Sources Configuration
 # Curated RSS feeds — all URLs live-tested and verified working.
-# Last audited: 2026-04-12
+# Last audited: 2026-05-01
 #
-# Categories: crypto | macro | energy | commodities | fixed_income | ev_tesla | technology | international
+# Categories: crypto | macro | equities | fixed_income | energy | commodities | healthcare | ev_tesla | technology | international
 # Priority: 9=essential  8=high  7=standard  6=supplemental
+#
+# modes: which pipeline modes include this source
+#   [general, positions] — used in both General Market Update and Position Analysis runs
+#   [positions]          — position-specific niche sources, Position Analysis only
 
 rss:
 
-  # ── Crypto ──────────────────────────────────────────────────────────────────
+  # ── Wires / Tier-1 Broad Market (always general) ─────────────────────────────
 
-  - name: coindesk
-    url: https://www.coindesk.com/arc/outboundfeeds/rss/
-    category: crypto
+  - name: reuters_business
+    url: https://feeds.reuters.com/reuters/businessNews
+    category: macro
     priority: 9
-    enabled: true
+    modes: [general, positions]
+    enabled: true   # Reuters global business & markets wire
 
-  - name: cointelegraph
-    url: https://cointelegraph.com/rss
-    category: crypto
+  - name: ap_business
+    url: https://feeds.apnews.com/rss/business
+    category: macro
     priority: 9
-    enabled: true
+    modes: [general, positions]
+    enabled: true   # AP global business wire
 
-  - name: the_block
-    url: https://www.theblock.co/rss.xml
-    category: crypto
-    priority: 8
-    enabled: true
-
-  - name: bitcoin_magazine
-    url: https://bitcoinmagazine.com/feed   # fixed URL (old .rss/full/ was 403)
-    category: crypto
-    priority: 8
-    enabled: true
-
-  - name: decrypt
-    url: https://decrypt.co/feed
-    category: crypto
-    priority: 8
-    enabled: true
-
-  - name: cryptobriefing
-    url: https://cryptobriefing.com/feed/
-    category: crypto
-    priority: 8
-    enabled: true
-
-  - name: beincrypto
-    url: https://beincrypto.com/feed/
-    category: crypto
+  - name: benzinga_markets
+    url: https://www.benzinga.com/markets/rss
+    category: equities
     priority: 7
-    enabled: true
+    modes: [general, positions]
+    enabled: true   # real-time equity market news and analysis
 
-  - name: ambcrypto
-    url: https://ambcrypto.com/feed/
-    category: crypto
-    priority: 7
-    enabled: true
-
-  - name: solana_news
-    url: https://solana.com/news/rss.xml   # official Solana Foundation blog
-    category: crypto
-    priority: 8
-    enabled: true
+  - name: federal_reserve
+    url: https://www.federalreserve.gov/feeds/press_all.xml
+    category: fixed_income
+    priority: 9
+    modes: [general, positions]
+    enabled: true   # Fed press releases — rate decisions, FOMC, speeches
 
   # ── General Markets / Macro ──────────────────────────────────────────────────
 
@@ -69,61 +47,78 @@ rss:
     url: https://feeds.marketwatch.com/marketwatch/topstories/
     category: macro
     priority: 9
+    modes: [general, positions]
     enabled: true
 
   - name: marketwatch_pulse
     url: https://feeds.marketwatch.com/marketwatch/marketpulse/
     category: macro
     priority: 8
+    modes: [general, positions]
     enabled: true
 
   - name: cnbc_top
     url: https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114
     category: macro
     priority: 9
+    modes: [general, positions]
     enabled: true
 
   - name: cnbc_economy
     url: https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258
     category: macro
     priority: 8
+    modes: [general, positions]
     enabled: true
 
   - name: cnbc_finance
     url: https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664
     category: macro
     priority: 8
+    modes: [general, positions]
     enabled: true
 
   - name: wsj_markets
     url: https://feeds.a.dj.com/rss/RSSMarketsMain.xml
     category: macro
     priority: 9
+    modes: [general, positions]
     enabled: true
 
   - name: bloomberg_markets
     url: https://feeds.bloomberg.com/markets/news.rss
     category: macro
     priority: 9
+    modes: [general, positions]
     enabled: true
 
   - name: yahoo_finance
     url: https://finance.yahoo.com/news/rssindex
     category: macro
     priority: 7
+    modes: [general, positions]
     enabled: true
 
   - name: seeking_alpha
     url: https://seekingalpha.com/market_currents.xml
-    category: macro
+    category: equities
     priority: 7
+    modes: [general, positions]
     enabled: true
 
   - name: calculated_risk
     url: https://www.calculatedriskblog.com/feeds/posts/default
     category: macro
     priority: 7
+    modes: [general, positions]
     enabled: true   # excellent macro/housing/jobs data commentary
+
+  - name: equities_google_news
+    url: https://news.google.com/rss/search?q=stock+market+earnings+NYSE+NASDAQ+equities+S%26P500&hl=en&gl=US&ceid=US:en
+    category: equities
+    priority: 8
+    modes: [general, positions]
+    enabled: true   # aggregates equity market news from multiple tier-1 sources
 
   # ── Bonds / Fixed Income ─────────────────────────────────────────────────────
 
@@ -131,19 +126,38 @@ rss:
     url: https://fredblog.stlouisfed.org/feed/
     category: fixed_income
     priority: 8
+    modes: [general, positions]
     enabled: true   # Federal Reserve Bank of St. Louis — data-driven commentary
 
   - name: bonds_google_news
-    url: https://news.google.com/rss/search?q=treasury+bonds+yields+federal+reserve+rates&hl=en&gl=US&ceid=US:en
+    url: https://news.google.com/rss/search?q=treasury+bonds+yields+federal+reserve+rates+interest&hl=en&gl=US&ceid=US:en
     category: fixed_income
     priority: 7
+    modes: [general, positions]
     enabled: true   # aggregates Reuters, FT, Bloomberg, WSJ on bonds/rates
 
   - name: marketwatch_bonds
     url: https://feeds.marketwatch.com/marketwatch/bonds/
     category: fixed_income
     priority: 8
+    modes: [general, positions]
     enabled: false  # 403 — not yet resolved
+
+  # ── Healthcare / Pharma ───────────────────────────────────────────────────────
+
+  - name: pharma_google_news
+    url: https://news.google.com/rss/search?q=pharmaceutical+biotech+drug+approval+FDA+healthcare+clinical+trial&hl=en&gl=US&ceid=US:en
+    category: healthcare
+    priority: 8
+    modes: [general, positions]
+    enabled: true   # pharma/biotech news — covers PFE, NVO, LLY, sector broadly
+
+  - name: stat_news
+    url: https://www.statnews.com/feed/
+    category: healthcare
+    priority: 8
+    modes: [general, positions]
+    enabled: true   # authoritative health/biotech reporting
 
   # ── Energy ────────────────────────────────────────────────────────────────────
 
@@ -151,19 +165,22 @@ rss:
     url: https://oilprice.com/rss/main
     category: energy
     priority: 9
+    modes: [general, positions]
     enabled: true
 
   - name: eia_today
     url: https://www.eia.gov/rss/todayinenergy.xml
     category: energy
     priority: 8
+    modes: [general, positions]
     enabled: true   # U.S. Energy Information Administration official data
 
   - name: rigzone
     url: https://www.rigzone.com/news/rss/rigzone_latest.aspx
     category: energy
-    priority: 8
-    enabled: true   # upstream oil & gas industry news
+    priority: 7
+    modes: [positions]
+    enabled: true   # upstream oil & gas industry news — positions-only
 
   # ── Precious Metals / Commodities ────────────────────────────────────────────
 
@@ -171,37 +188,108 @@ rss:
     url: https://www.mining.com/feed/
     category: commodities
     priority: 8
+    modes: [general, positions]
     enabled: true   # gold, silver, copper, lithium mining industry
 
   - name: silverseek
     url: https://silverseek.com/rss.xml
     category: commodities
     priority: 7
-    enabled: true   # silver-focused analysis
+    modes: [positions]
+    enabled: true   # silver-focused — positions-only
 
   - name: silver_doctors
     url: https://www.silverdoctors.com/feed/
     category: commodities
     priority: 6
-    enabled: true   # precious metals, macro commentary
+    modes: [positions]
+    enabled: true   # precious metals, macro commentary — positions-only
 
   - name: nasdaq_commodities
     url: https://www.nasdaq.com/feed/rssoutbound?category=Commodities
     category: commodities
     priority: 7
-    enabled: true
+    modes: [positions]
+    enabled: false  # consistent read timeout — disabled
 
   - name: metals_google_news
-    url: https://news.google.com/rss/search?q=gold+silver+precious+metals+price+commodities&hl=en&gl=US&ceid=US:en
+    url: https://news.google.com/rss/search?q=gold+silver+precious+metals+price+commodities+GLD&hl=en&gl=US&ceid=US:en
     category: commodities
     priority: 8
-    enabled: true   # fills Kitco gap — aggregates from Kitco, Reuters, Bloomberg
+    modes: [general, positions]
+    enabled: true   # aggregates Kitco, Reuters, Bloomberg on metals/commodities
 
   - name: kitco_news
     url: https://www.kitco.com/feed/
     category: commodities
     priority: 9
+    modes: [general, positions]
     enabled: false  # 404 — URL changed, not resolved
+
+  # ── Crypto ──────────────────────────────────────────────────────────────────
+
+  - name: coindesk
+    url: https://www.coindesk.com/arc/outboundfeeds/rss/
+    category: crypto
+    priority: 9
+    modes: [general, positions]
+    enabled: true
+
+  - name: cointelegraph
+    url: https://cointelegraph.com/rss
+    category: crypto
+    priority: 9
+    modes: [general, positions]
+    enabled: true
+
+  - name: the_block
+    url: https://www.theblock.co/rss.xml
+    category: crypto
+    priority: 8
+    modes: [positions]
+    enabled: true
+
+  - name: bitcoin_magazine
+    url: https://bitcoinmagazine.com/feed   # fixed URL (old .rss/full/ was 403)
+    category: crypto
+    priority: 8
+    modes: [positions]
+    enabled: true
+
+  - name: decrypt
+    url: https://decrypt.co/feed
+    category: crypto
+    priority: 8
+    modes: [positions]
+    enabled: true
+
+  - name: cryptobriefing
+    url: https://cryptobriefing.com/feed/
+    category: crypto
+    priority: 7
+    modes: [positions]
+    enabled: true
+
+  - name: beincrypto
+    url: https://beincrypto.com/feed/
+    category: crypto
+    priority: 7
+    modes: [positions]
+    enabled: true
+
+  - name: ambcrypto
+    url: https://ambcrypto.com/feed/
+    category: crypto
+    priority: 6
+    modes: [positions]
+    enabled: true
+
+  - name: solana_news
+    url: https://solana.com/news/rss.xml   # official Solana Foundation blog
+    category: crypto
+    priority: 7
+    modes: [positions]
+    enabled: true
 
   # ── Tesla / EV ───────────────────────────────────────────────────────────────
 
@@ -209,24 +297,28 @@ rss:
     url: https://electrek.co/feed/
     category: ev_tesla
     priority: 9
-    enabled: true
+    modes: [general, positions]
+    enabled: true   # leading EV/clean energy coverage
 
   - name: teslarati
     url: https://www.teslarati.com/feed/
     category: ev_tesla
     priority: 8
+    modes: [positions]
     enabled: true   # Tesla-specific: FSD, earnings, product news
 
   - name: cleantechnica
     url: https://cleantechnica.com/feed/
     category: ev_tesla
     priority: 7
+    modes: [positions]
     enabled: true   # broad clean energy/EV coverage
 
   - name: insideevs
     url: https://insideevs.com/rss/news/
     category: ev_tesla
     priority: 7
+    modes: [positions]
     enabled: false  # 404 — URL changed, not resolved
 
   # ── Technology ───────────────────────────────────────────────────────────────
@@ -235,7 +327,15 @@ rss:
     url: https://techcrunch.com/feed/
     category: technology
     priority: 7
+    modes: [general, positions]
     enabled: true
+
+  - name: ars_technica
+    url: https://feeds.arstechnica.com/arstechnica/technology-lab
+    category: technology
+    priority: 7
+    modes: [general, positions]
+    enabled: true   # deep-dive tech coverage with market implications
 
   # ── International ─────────────────────────────────────────────────────────────
 
@@ -243,30 +343,35 @@ rss:
     url: https://feeds.bbci.co.uk/news/business/rss.xml
     category: international
     priority: 8
+    modes: [general, positions]
     enabled: true
 
   - name: cnbc_world
     url: https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100727362
     category: international
     priority: 7
+    modes: [general, positions]
     enabled: true
 
   - name: guardian_business
     url: https://www.theguardian.com/uk/business/rss
     category: international
     priority: 7
+    modes: [general, positions]
     enabled: true   # UK / European business perspective
 
   - name: nikkei_asia
     url: https://asia.nikkei.com/rss/feed/nar
     category: international
     priority: 8
+    modes: [general, positions]
     enabled: true   # Japan / Asia-Pacific markets and business
 
   - name: scmp_business
     url: https://www.scmp.com/rss/91/feed
     category: international
     priority: 7
+    modes: [general, positions]
     enabled: true   # South China Morning Post — China / Hong Kong business
 
 # Transcript sources (future)

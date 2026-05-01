@@ -12,7 +12,9 @@ from datetime import date
 import httpx
 
 from .models import (
+    CategorySummary,
     EnrichedPosition,
+    MarketSummary,
     PortfolioSummary,
     PositionSummary,
     ScoredArticle,
@@ -160,9 +162,19 @@ def summarize_for_position(
             ]
         )
 
+        # Build subject line — use option_label when available so the LLM has full context
+        if position.option_label:
+            subject = f"{position.ticker} option ({position.option_label})"
+            option_note = (
+                f"\nNote: this is an options position ({position.option_label}). "
+                "Focus your analysis on the underlying equity's price drivers and relevant news."
+            )
+        else:
+            subject = f"{position.ticker} ({position.underlying or position.sector})"
+            option_note = ""
+
         prompt = (
-            f"Analyze these market developments for {position.ticker} "
-            f"({position.underlying or position.sector}):\n\n"
+            f"Analyze these market developments for {subject}:{option_note}\n\n"
             f"{article_texts}\n\n"
             "Provide a brief analysis in this exact format:\n"
             "NET_BIAS: [bullish/bearish/mixed/neutral]\n"
@@ -313,4 +325,155 @@ def generate_portfolio_summary(
         what_matters=what_matters,
         what_is_noise=what_is_noise,
         llm_used=any_llm_used or contrarian_llm_used,
+    )
+
+
+# Category display config for general market digest
+CATEGORY_META: dict[str, dict] = {
+    "macro": {"emoji": "📊", "label": "Macro & Economy"},
+    "equities": {"emoji": "📈", "label": "Equities & Earnings"},
+    "fixed_income": {"emoji": "🏦", "label": "Bonds & Rates"},
+    "crypto": {"emoji": "₿", "label": "Crypto"},
+    "energy": {"emoji": "⚡", "label": "Energy"},
+    "commodities": {"emoji": "🪙", "label": "Commodities"},
+    "healthcare": {"emoji": "💊", "label": "Healthcare & Pharma"},
+    "ev_tesla": {"emoji": "🚗", "label": "EV & Clean Energy"},
+    "technology": {"emoji": "💻", "label": "Technology"},
+    "international": {"emoji": "🌍", "label": "International"},
+    "general": {"emoji": "📰", "label": "General"},
+}
+
+
+def generate_category_summaries(
+    scored_articles: list[ScoredArticle],
+    use_ollama: bool = True,
+    ollama_model: str | None = None,
+    ollama_temperature: float = 0.3,
+    ollama_max_tokens: int = 2048,
+    top_articles_per_category: int = 8,
+) -> list[CategorySummary]:
+    """Generate per-category summaries for General Market Update mode."""
+    from collections import defaultdict
+
+    # Group articles by category
+    by_category: dict[str, list[ScoredArticle]] = defaultdict(list)
+    for sa in scored_articles:
+        cat = sa.article.category or "general"
+        by_category[cat].append(sa)
+
+    summaries: list[CategorySummary] = []
+
+    for category, articles in by_category.items():
+        # Sort by score within category
+        articles.sort(key=lambda x: x.portfolio_score, reverse=True)
+        top = articles[:top_articles_per_category]
+        top_headlines = [sa.article.title for sa in top[:5]]
+
+        interpretation = ""
+        key_points: list[str] = []
+        llm_used = False
+
+        if use_ollama and top:
+            article_texts = "\n".join(
+                f"- {sa.article.title}: {sa.article.content[:150]}" for sa in top
+            )
+            meta = CATEGORY_META.get(category, {"label": category})
+            prompt = (
+                f"Summarize these {meta['label']} news items for an investor:\n\n"
+                f"{article_texts}\n\n"
+                "Respond in this exact format:\n"
+                "INTERPRETATION: [2-3 sentence summary of the key trend or development]\n"
+                "KEY_POINTS: [3 concise bullet points, comma-separated]"
+            )
+            result = _call_ollama(
+                prompt,
+                model=ollama_model,
+                temperature=ollama_temperature,
+                max_tokens=min(ollama_max_tokens, 512),
+            )
+            if result:
+                parsed = _parse_structured_response(result)
+                if parsed.get("INTERPRETATION"):
+                    interpretation = parsed["INTERPRETATION"]
+                if parsed.get("KEY_POINTS"):
+                    key_points = [
+                        p.strip() for p in parsed["KEY_POINTS"].split(",") if p.strip()
+                    ]
+                llm_used = True
+
+        if not interpretation:
+            interpretation = "; ".join(top_headlines[:3]) if top_headlines else "No notable developments."
+
+        summaries.append(
+            CategorySummary(
+                category=category,
+                article_count=len(articles),
+                top_headlines=top_headlines,
+                interpretation=interpretation,
+                key_points=key_points,
+                llm_used=llm_used,
+            )
+        )
+
+    # Sort categories by a preferred display order
+    order = list(CATEGORY_META.keys())
+    summaries.sort(key=lambda s: order.index(s.category) if s.category in order else len(order))
+    return summaries
+
+
+def generate_general_market_summary(
+    run_date: date,
+    scored_articles: list[ScoredArticle],
+    use_ollama: bool = True,
+    run_label: str = "",
+    ollama_model: str | None = None,
+    ollama_temperature: float = 0.3,
+    ollama_max_tokens: int = 2048,
+) -> MarketSummary:
+    """Generate a General Market Update summary."""
+    category_summaries = generate_category_summaries(
+        scored_articles,
+        use_ollama=use_ollama,
+        ollama_model=ollama_model,
+        ollama_temperature=ollama_temperature,
+        ollama_max_tokens=ollama_max_tokens,
+    )
+
+    any_llm_used = any(cs.llm_used for cs in category_summaries)
+
+    macro_overview = ""
+    key_themes: list[str] = []
+
+    if use_ollama and scored_articles:
+        top_titles = "\n".join(
+            f"- {sa.article.title}" for sa in scored_articles[:15]
+        )
+        prompt = (
+            f"Based on today's top financial headlines, provide a macro market overview:\n\n"
+            f"{top_titles}\n\n"
+            "Respond in this exact format:\n"
+            "OVERVIEW: [3-4 sentence market overview]\n"
+            "THEMES: [5 key market themes, comma-separated]"
+        )
+        result = _call_ollama(
+            prompt,
+            model=ollama_model,
+            temperature=ollama_temperature,
+            max_tokens=min(ollama_max_tokens, 512),
+        )
+        if result:
+            parsed = _parse_structured_response(result)
+            if parsed.get("OVERVIEW"):
+                macro_overview = parsed["OVERVIEW"]
+            if parsed.get("THEMES"):
+                key_themes = [t.strip() for t in parsed["THEMES"].split(",") if t.strip()]
+            any_llm_used = True
+
+    return MarketSummary(
+        date=run_date,
+        run_label=run_label,
+        category_summaries=category_summaries,
+        macro_overview=macro_overview,
+        key_themes=key_themes,
+        llm_used=any_llm_used,
     )
