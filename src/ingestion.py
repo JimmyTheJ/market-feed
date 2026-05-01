@@ -102,7 +102,7 @@ def fetch_all_sources(
 
         # Apply modes filter for general market mode
         if pipeline_mode == "general":
-            feed_modes = feed_config.get("modes", ["positions"])
+            feed_modes = feed_config.get("modes", ["general", "positions"])  # default: include everywhere
             if "general" not in feed_modes:
                 continue
 

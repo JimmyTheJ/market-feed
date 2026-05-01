@@ -24,7 +24,7 @@ def generate_digest(
 
     # LLM usage indicator
     if summary.llm_used:
-        model = os.getenv("OLLAMA_MODEL", "llama3.2")
+        model = summary.model_name or os.getenv("OLLAMA_MODEL", "llama3.2")
         lines.append(f"> 🤖 **Summary method:** AI-generated ({model})")
     else:
         lines.append("> 📋 **Summary method:** Extractive (LLM unavailable)")
@@ -134,7 +134,7 @@ def generate_general_digest(summary: MarketSummary) -> str:
     lines.append("")
 
     if summary.llm_used:
-        model = os.getenv("OLLAMA_MODEL", "llama3.2")
+        model = summary.model_name or os.getenv("OLLAMA_MODEL", "llama3.2")
         lines.append(f"> 🤖 **Summary method:** AI-generated ({model})")
     else:
         lines.append("> 📋 **Summary method:** Extractive (LLM unavailable)")

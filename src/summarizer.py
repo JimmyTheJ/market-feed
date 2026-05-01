@@ -315,9 +315,12 @@ def generate_portfolio_summary(
         else ["Low article volume today."]
     )
 
+    _, resolved_model = _get_ollama_config(ollama_model)
+
     return PortfolioSummary(
         date=run_date,
         run_label=run_label,
+        model_name=resolved_model if (any_llm_used or contrarian_llm_used) else "",
         top_themes=sorted(all_themes)[:10],
         top_signals=top_signals,
         position_summaries=position_summaries,
@@ -469,9 +472,12 @@ def generate_general_market_summary(
                 key_themes = [t.strip() for t in parsed["THEMES"].split(",") if t.strip()]
             any_llm_used = True
 
+    _, resolved_model = _get_ollama_config(ollama_model)
+
     return MarketSummary(
         date=run_date,
         run_label=run_label,
+        model_name=resolved_model if any_llm_used else "",
         category_summaries=category_summaries,
         macro_overview=macro_overview,
         key_themes=key_themes,

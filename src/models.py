@@ -193,6 +193,7 @@ class PortfolioSummary(BaseModel):
 
     date: date
     run_label: str = ""
+    model_name: str = ""
     top_themes: list[str] = Field(default_factory=list)
     top_signals: list[dict] = Field(default_factory=list)
     position_summaries: list[PositionSummary] = Field(default_factory=list)
@@ -218,6 +219,7 @@ class MarketSummary(BaseModel):
 
     date: date
     run_label: str = ""
+    model_name: str = ""
     category_summaries: list[CategorySummary] = Field(default_factory=list)
     macro_overview: str = ""
     key_themes: list[str] = Field(default_factory=list)
