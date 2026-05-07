@@ -367,3 +367,29 @@ class PortfolioPnL(BaseModel):
     total_realized_pl: float = 0.0
     total_unrealized_pl: Optional[float] = None
     total_pl: Optional[float] = None
+
+
+# ── Account models ────────────────────────────────────────────────────────────
+
+
+class Account(BaseModel):
+    """A brokerage account within a profile."""
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()).replace("-", "")[:10])
+    name: str
+    order: int = 0
+    currency: str = "USD"
+    description: str = ""
+
+    @field_validator("name")
+    @classmethod
+    def name_not_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("name must be non-empty")
+        return v.strip()
+
+
+class AccountsFile(BaseModel):
+    """The accounts.yaml structure for a profile."""
+
+    accounts: list[Account] = Field(default_factory=list)

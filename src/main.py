@@ -41,7 +41,7 @@ from .storage import (
     write_summary_payload,
 )
 from .summarizer import generate_general_market_summary, generate_portfolio_summary
-from .transactions_loader import has_transactions, load_transactions
+from .transactions_loader import has_transactions, load_all_profile_transactions
 
 load_dotenv()
 
@@ -130,7 +130,7 @@ def run_pipeline(
     # Step 2: Load positions
     log("Loading positions...")
     if has_transactions(profile=profile):
-        txs_file = load_transactions(profile=profile)
+        txs_file = load_all_profile_transactions(profile=profile)
         if txs_file.transactions:
             # Inherit currency list from positions.yaml if it still exists
             try:

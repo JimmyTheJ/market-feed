@@ -826,6 +826,72 @@
         }
 
         /* ── Ledger / P&L tab ────────────────────────────────────────── */
+        .acct-tab-bar {
+            display: flex;
+            align-items: flex-end;
+            gap: 2px;
+            overflow-x: auto;
+            border-bottom: 1px solid var(--border);
+            scrollbar-width: none;
+            flex: 1;
+        }
+        .acct-tab-bar::-webkit-scrollbar { display: none; }
+        .acct-tab {
+            flex-shrink: 0;
+            padding: 8px 14px 9px;
+            cursor: pointer;
+            border: 1px solid transparent;
+            border-bottom: none;
+            border-radius: 6px 6px 0 0;
+            font-size: 13px;
+            color: var(--text-muted);
+            white-space: nowrap;
+            user-select: none;
+            background: none;
+            transition: background 0.15s, color 0.15s;
+        }
+        .acct-tab:hover { background: var(--surface); color: var(--text); }
+        .acct-tab.active {
+            background: var(--surface);
+            color: var(--text);
+            border-color: var(--border);
+            margin-bottom: -1px;
+            padding-bottom: 10px;
+        }
+        .acct-tab.drag-over { outline: 2px dashed var(--accent); outline-offset: -2px; }
+        .acct-tab-grip {
+            display: inline-block;
+            margin-right: 5px;
+            color: var(--text-muted);
+            font-size: 10px;
+            cursor: grab;
+            opacity: 0.4;
+        }
+        .acct-tab-add {
+            flex-shrink: 0;
+            padding: 5px 12px;
+            cursor: pointer;
+            background: none;
+            border: 1px dashed var(--border);
+            border-radius: 6px;
+            color: var(--text-muted);
+            font-size: 18px;
+            line-height: 1;
+            transition: color 0.15s, border-color 0.15s;
+            margin-left: 6px;
+            align-self: center;
+        }
+        .acct-tab-add:hover { color: var(--accent); border-color: var(--accent); }
+        .ledger-mode-banner {
+            background: rgba(31,90,160,0.12);
+            border: 1px solid rgba(31,90,160,0.3);
+            border-radius: var(--radius);
+            padding: 9px 14px;
+            margin-bottom: 12px;
+            font-size: 13px;
+            color: var(--text-muted);
+            display: none;
+        }
         .pnl-cards {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -996,6 +1062,10 @@
 
         <!-- Positions Tab -->
         <div class="tab-content active" id="tab-positions">
+            <div id="ledger-mode-banner" class="ledger-mode-banner">
+                <span style="color:var(--accent)">ℹ</span>
+                Positions are derived from your <strong>Ledger</strong> transactions — all accounts combined. To add or remove positions, manage trades in the <a href="#" onclick="document.querySelector('.tab[data-tab=ledger]').click();return false;" style="color:var(--accent)">Ledger tab</a>.
+            </div>
             <div class="card">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
                     <h2 style="margin-bottom:0">Portfolio Positions</h2>
@@ -1024,7 +1094,7 @@
                 <div class="weight-sum" id="weight-sum"></div>
             </div>
 
-            <div class="card">
+            <div class="card" id="add-position-card">
                 <h2>Add Position</h2>
                 <div class="add-tabs">
                     <button class="add-tab active" onclick="switchAddTab('equity')">Equity</button>
@@ -1199,74 +1269,124 @@
 
         <!-- Ledger Tab -->
         <div class="tab-content" id="tab-ledger">
-            <!-- P&L Summary -->
-            <div class="card">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-                    <h2 style="margin-bottom:0">P&amp;L Summary</h2>
-                    <div style="display:flex;gap:8px;align-items:center">
-                        <select id="pnl-currency" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px" onchange="loadPnl()"></select>
-                        <button class="btn" style="padding:5px 10px;font-size:12px" onclick="loadPnl()">↻</button>
-                    </div>
-                </div>
-                <div class="pnl-cards" id="pnl-summary-cards">
-                    <div style="color:var(--text-muted);font-size:13px">No transactions yet. Add your first trade below.</div>
-                </div>
+            <!-- Empty state: no accounts yet -->
+            <div id="ledger-empty" class="card" style="text-align:center;padding:56px 24px;display:none">
+                <div style="font-size:48px;margin-bottom:12px;opacity:0.3">🏦</div>
+                <h3 style="margin-bottom:8px;color:var(--text)">No accounts yet</h3>
+                <p style="color:var(--text-muted);margin-bottom:20px;font-size:14px">Create a brokerage account to start tracking your transactions and P&amp;L.</p>
+                <button class="btn btn-primary" onclick="openAccountModal()">+ Create Account</button>
             </div>
 
-            <!-- Per-position P&L table -->
-            <div class="card" id="pnl-positions-card" style="display:none">
-                <h2>Open Positions</h2>
-                <div style="overflow-x:auto">
-                    <table class="ledger-table" id="pnl-positions-table">
-                        <thead>
-                            <tr>
-                                <th>Instrument</th>
-                                <th>Qty</th>
-                                <th>Avg Cost</th>
-                                <th>Price</th>
-                                <th>Market Value</th>
-                                <th>Unrealized P&amp;L</th>
-                                <th>%</th>
-                                <th>Realized P&amp;L</th>
-                            </tr>
-                        </thead>
-                        <tbody id="pnl-positions-body"></tbody>
-                    </table>
+            <!-- Account tabs (shown when accounts exist) -->
+            <div id="ledger-accounts" style="display:none">
+                <!-- Account tab bar -->
+                <div style="display:flex;align-items:flex-end;margin-bottom:0">
+                    <div class="acct-tab-bar" id="acct-tab-bar"><!-- tabs injected by JS --></div>
+                    <button class="acct-tab-add" onclick="openAccountModal()" title="Add account">+</button>
                 </div>
-            </div>
 
-            <!-- Transaction History -->
-            <div class="card">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-                    <h2 style="margin-bottom:0">Transactions</h2>
-                    <div style="display:flex;gap:8px;align-items:center">
-                        <input type="text" id="tx-filter-ticker" placeholder="Filter ticker…"
-                               style="width:130px;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:12px"
-                               oninput="renderTransactions()">
-                        <button class="btn btn-primary" style="padding:5px 12px;font-size:12px" onclick="openTxModal()">+ Add</button>
+                <!-- P&L Summary -->
+                <div class="card" style="border-top-left-radius:0;margin-top:0">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                        <h2 style="margin-bottom:0" id="acct-pnl-title">P&amp;L Summary</h2>
+                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                            <select id="pnl-currency" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px" onchange="loadPnl()"></select>
+                            <button class="btn" style="padding:5px 10px;font-size:12px" onclick="loadPnl()">↻</button>
+                            <button class="btn btn-small" style="padding:3px 8px;font-size:11px;color:var(--text-muted)" id="acct-edit-btn" onclick="openAccountModal(currentAccountId)" title="Rename account">✎</button>
+                            <button class="btn btn-small btn-danger" style="padding:3px 8px;font-size:11px" onclick="deleteCurrentAccount()" title="Delete account">✕</button>
+                        </div>
+                    </div>
+                    <div class="pnl-cards" id="pnl-summary-cards">
+                        <div style="color:var(--text-muted);font-size:13px">No transactions yet. Add your first trade below.</div>
                     </div>
                 </div>
-                <div style="overflow-x:auto">
-                    <table class="ledger-table">
-                        <thead>
-                            <tr>
-                                <th>Date</th>
-                                <th>Ticker</th>
-                                <th>Action</th>
-                                <th>Qty</th>
-                                <th>Price</th>
-                                <th>Total</th>
-                                <th>Curr.</th>
-                                <th>Type</th>
-                                <th>Notes</th>
-                                <th></th>
-                            </tr>
-                        </thead>
-                        <tbody id="tx-table-body">
-                            <tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:20px">No transactions yet</td></tr>
-                        </tbody>
-                    </table>
+
+                <!-- Per-position P&L table -->
+                <div class="card" id="pnl-positions-card" style="display:none">
+                    <h2>Open Positions</h2>
+                    <div style="overflow-x:auto">
+                        <table class="ledger-table" id="pnl-positions-table">
+                            <thead>
+                                <tr>
+                                    <th>Instrument</th>
+                                    <th>Qty</th>
+                                    <th>Avg Cost</th>
+                                    <th>Price</th>
+                                    <th>Market Value</th>
+                                    <th>Unrealized P&amp;L</th>
+                                    <th>%</th>
+                                    <th>Realized P&amp;L</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pnl-positions-body"></tbody>
+                        </table>
+                    </div>
                 </div>
+
+                <!-- Transaction History -->
+                <div class="card">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                        <h2 style="margin-bottom:0">Transactions</h2>
+                        <div style="display:flex;gap:8px;align-items:center">
+                            <input type="text" id="tx-filter-ticker" placeholder="Filter ticker…"
+                                   style="width:130px;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:12px"
+                                   oninput="renderTransactions()">
+                            <button class="btn btn-primary" style="padding:5px 12px;font-size:12px" onclick="openTxModal()">+ Add</button>
+                        </div>
+                    </div>
+                    <div style="overflow-x:auto">
+                        <table class="ledger-table">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Ticker</th>
+                                    <th>Action</th>
+                                    <th>Qty</th>
+                                    <th>Price</th>
+                                    <th>Total</th>
+                                    <th>Curr.</th>
+                                    <th>Type</th>
+                                    <th>Notes</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="tx-table-body">
+                                <tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:20px">No transactions yet</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Account Create/Edit Modal -->
+    <div class="modal-overlay" id="acct-modal">
+        <div class="modal-box" style="max-width:380px">
+            <h3 id="acct-modal-title">Create Account</h3>
+            <input type="hidden" id="acct-modal-id">
+            <div class="modal-field">
+                <label>Account Name *</label>
+                <input type="text" id="acct-name" placeholder="e.g. TFSA, RRSP, Margin" onkeydown="if(event.key==='Enter')saveAccountModal()">
+            </div>
+            <div class="modal-row">
+                <div class="modal-field">
+                    <label>Default Currency</label>
+                    <select id="acct-currency">
+                        <option value="USD">USD</option>
+                        <option value="CAD">CAD</option>
+                        <option value="EUR">EUR</option>
+                        <option value="GBP">GBP</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-field" style="margin-top:8px">
+                <label>Description</label>
+                <input type="text" id="acct-description" placeholder="Optional description">
+            </div>
+            <div class="modal-actions">
+                <button class="btn" onclick="closeAccountModal()">Cancel</button>
+                <button class="btn btn-primary" id="acct-save-btn" onclick="saveAccountModal()">Create</button>
             </div>
         </div>
     </div>
@@ -1384,6 +1504,8 @@
         let authEnabled = false;
         let currentUser = null;
         let currentProfile = null;  // { id, name, username, default_currency, scheduler_enabled, use_ollama }
+        let currentAccounts = [];   // account list for current profile
+        let currentAccountId = null; // selected account id in Ledger tab
 
         // ── Profile helpers ─────────────────────────────────────────────
 
@@ -1597,6 +1719,9 @@
             // Reset model dropdown so it reloads for the new profile
             const sel = document.getElementById('ollama-model-select');
             if (sel) { sel.dataset.loaded = ''; sel.dataset.savedModel = p.ollama_model || ''; }
+            // Reset account state for the new profile
+            currentAccounts = [];
+            currentAccountId = null;
             hideProfileSelector();
             updateProfileBadge();
             loadPositions();
@@ -1681,7 +1806,7 @@
                 if (tab.dataset.tab === 'outputs') loadOutputs();
                 if (tab.dataset.tab === 'pipeline') loadSchedule();
                 if (tab.dataset.tab === 'charts') renderChart();
-                if (tab.dataset.tab === 'ledger') { loadTransactions(); loadPnl(); }
+                if (tab.dataset.tab === 'ledger') { loadAccounts(); }
             });
         });
 
@@ -1898,6 +2023,12 @@
                     strike: p.strike,
                     expiration: p.expiration,
                 }));
+                // Show ledger-mode banner and hide add-position card when driven by ledger
+                const ledgerMode = data.source === 'ledger';
+                const banner = document.getElementById('ledger-mode-banner');
+                const addCard = document.getElementById('add-position-card');
+                if (banner) banner.style.display = ledgerMode ? 'block' : 'none';
+                if (addCard) addCard.style.display = ledgerMode ? 'none' : 'block';
                 populateCurrencyDropdowns();
                 renderPositions(data);
             } catch (e) {
@@ -2520,9 +2651,10 @@
             btn.textContent = 'Saving…';
 
             try {
+                const acctParam = currentAccountId ? `account_id=${encodeURIComponent(currentAccountId)}` : '';
                 const url = txId
-                    ? apiUrl(`/api/transactions/${txId}`)
-                    : apiUrl('/api/transactions');
+                    ? apiUrl(`/api/transactions/${txId}`, acctParam)
+                    : apiUrl('/api/transactions', acctParam);
                 const method = txId ? 'PUT' : 'POST';
                 const res = await apiFetch(url, {
                     method,
@@ -2550,7 +2682,8 @@
             const label = tx ? `${tx.action.toUpperCase()} ${tx.quantity} ${tx.ticker} on ${tx.date}` : txId;
             if (!confirm(`Delete transaction: ${label}?`)) return;
             try {
-                const res = await apiFetch(apiUrl(`/api/transactions/${txId}`), { method: 'DELETE' });
+                const acctParam = currentAccountId ? `account_id=${encodeURIComponent(currentAccountId)}` : '';
+                const res = await apiFetch(apiUrl(`/api/transactions/${txId}`, acctParam), { method: 'DELETE' });
                 if (res.ok) {
                     showToast('Transaction deleted');
                     await loadTransactions();
@@ -2566,7 +2699,8 @@
 
         async function loadTransactions() {
             try {
-                const res = await apiFetch(apiUrl('/api/transactions'));
+                const acctParam = currentAccountId ? `account_id=${encodeURIComponent(currentAccountId)}` : '';
+                const res = await apiFetch(apiUrl('/api/transactions', acctParam));
                 const data = await res.json();
                 currentTransactions = data.transactions || [];
                 renderTransactions();
@@ -2615,8 +2749,9 @@
         async function loadPnl() {
             const currSel = document.getElementById('pnl-currency');
             const dispCurrency = currSel?.value || displayCurrency || 'USD';
+            const acctParam = currentAccountId ? `account_id=${encodeURIComponent(currentAccountId)}&display_currency=${dispCurrency}` : `display_currency=${dispCurrency}`;
             try {
-                const res = await apiFetch(apiUrl('/api/pnl', `display_currency=${dispCurrency}`));
+                const res = await apiFetch(apiUrl('/api/pnl', acctParam));
                 const data = await res.json();
                 currentPnl = data.pnl;
                 renderPnl(currentPnl);
@@ -2698,6 +2833,206 @@
             } else {
                 posCard.style.display = 'none';
             }
+        }
+
+        // ── Account management ──────────────────────────────────────────
+
+        async function loadAccounts() {
+            if (!currentProfile) return;
+            try {
+                const res = await apiFetch(apiUrl('/api/accounts'));
+                const data = await res.json();
+                currentAccounts = data.accounts || [];
+            } catch (e) {
+                currentAccounts = [];
+            }
+
+            const empty = document.getElementById('ledger-empty');
+            const acctView = document.getElementById('ledger-accounts');
+
+            if (currentAccounts.length === 0) {
+                empty.style.display = 'block';
+                acctView.style.display = 'none';
+                currentAccountId = null;
+            } else {
+                empty.style.display = 'none';
+                acctView.style.display = 'block';
+                // Keep selected account if still valid; else select first
+                if (!currentAccountId || !currentAccounts.find(a => a.id === currentAccountId)) {
+                    currentAccountId = currentAccounts[0].id;
+                }
+                renderAccountTabs();
+                loadTransactions();
+                loadPnl();
+            }
+        }
+
+        function renderAccountTabs() {
+            const bar = document.getElementById('acct-tab-bar');
+            bar.innerHTML = currentAccounts.map(a => `
+                <div class="acct-tab${a.id === currentAccountId ? ' active' : ''}"
+                     data-acct-id="${a.id}"
+                     draggable="true"
+                     onclick="switchAccount('${a.id}')">
+                    <span class="acct-tab-grip">⠿</span>${escHtml(a.name)}
+                </div>
+            `).join('');
+            initTabDrag();
+            // Update P&L title
+            const acct = currentAccounts.find(a => a.id === currentAccountId);
+            const title = document.getElementById('acct-pnl-title');
+            if (title && acct) title.textContent = acct.name + ' — P&L Summary';
+        }
+
+        function switchAccount(id) {
+            currentAccountId = id;
+            renderAccountTabs();
+            loadTransactions();
+            loadPnl();
+        }
+
+        function openAccountModal(id) {
+            const modal = document.getElementById('acct-modal');
+            const titleEl = document.getElementById('acct-modal-title');
+            const saveBtn = document.getElementById('acct-save-btn');
+            document.getElementById('acct-modal-id').value = id || '';
+            if (id) {
+                const acct = currentAccounts.find(a => a.id === id);
+                titleEl.textContent = 'Edit Account';
+                saveBtn.textContent = 'Save';
+                document.getElementById('acct-name').value = acct ? acct.name : '';
+                document.getElementById('acct-currency').value = acct ? (acct.currency || 'USD') : 'USD';
+                document.getElementById('acct-description').value = acct ? (acct.description || '') : '';
+            } else {
+                titleEl.textContent = 'Create Account';
+                saveBtn.textContent = 'Create';
+                document.getElementById('acct-name').value = '';
+                document.getElementById('acct-currency').value = currentProfile?.default_currency || 'USD';
+                document.getElementById('acct-description').value = '';
+            }
+            modal.classList.add('open');
+            setTimeout(() => document.getElementById('acct-name').focus(), 50);
+        }
+
+        function closeAccountModal() {
+            document.getElementById('acct-modal').classList.remove('open');
+        }
+
+        async function saveAccountModal() {
+            const id = document.getElementById('acct-modal-id').value;
+            const name = document.getElementById('acct-name').value.trim();
+            if (!name) { showToast('Account name is required', 'error'); return; }
+            const payload = {
+                name,
+                currency: document.getElementById('acct-currency').value,
+                description: document.getElementById('acct-description').value.trim(),
+            };
+            const btn = document.getElementById('acct-save-btn');
+            btn.disabled = true;
+            try {
+                const url = id ? apiUrl(`/api/accounts/${id}`) : apiUrl('/api/accounts');
+                const method = id ? 'PUT' : 'POST';
+                const res = await apiFetch(url, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    closeAccountModal();
+                    if (!id) {
+                        // New account — select it
+                        currentAccountId = data.account.id;
+                    }
+                    showToast(id ? 'Account updated' : 'Account created');
+                    await loadAccounts();
+                } else {
+                    const err = await res.json();
+                    showToast(err.detail || 'Failed to save account', 'error');
+                }
+            } catch (e) {
+                showToast('Network error', 'error');
+            }
+            btn.disabled = false;
+        }
+
+        async function deleteCurrentAccount() {
+            if (!currentAccountId) return;
+            const acct = currentAccounts.find(a => a.id === currentAccountId);
+            const name = acct ? acct.name : currentAccountId;
+            if (!confirm(`Delete account "${name}" and ALL its transactions? This cannot be undone.`)) return;
+            try {
+                const res = await apiFetch(apiUrl(`/api/accounts/${currentAccountId}`), { method: 'DELETE' });
+                if (res.ok) {
+                    currentAccountId = null;
+                    showToast(`Account "${name}" deleted`);
+                    await loadAccounts();
+                    loadPositions(); // Refresh positions since accounts changed
+                } else {
+                    const err = await res.json();
+                    showToast(err.detail || 'Failed to delete account', 'error');
+                }
+            } catch (e) {
+                showToast('Network error', 'error');
+            }
+        }
+
+        // ── Drag-to-reorder account tabs ────────────────────────────────
+
+        let dragSrcId = null;
+
+        function initTabDrag() {
+            const bar = document.getElementById('acct-tab-bar');
+            bar.querySelectorAll('.acct-tab[draggable]').forEach(tab => {
+                tab.addEventListener('dragstart', e => {
+                    dragSrcId = tab.dataset.acctId;
+                    e.dataTransfer.effectAllowed = 'move';
+                });
+                tab.addEventListener('dragover', e => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    bar.querySelectorAll('.acct-tab').forEach(t => t.classList.remove('drag-over'));
+                    tab.classList.add('drag-over');
+                });
+                tab.addEventListener('dragleave', () => tab.classList.remove('drag-over'));
+                tab.addEventListener('drop', async e => {
+                    e.preventDefault();
+                    tab.classList.remove('drag-over');
+                    const targetId = tab.dataset.acctId;
+                    if (dragSrcId && dragSrcId !== targetId) {
+                        const ids = currentAccounts.map(a => a.id);
+                        const srcIdx = ids.indexOf(dragSrcId);
+                        const tgtIdx = ids.indexOf(targetId);
+                        ids.splice(srcIdx, 1);
+                        ids.splice(tgtIdx, 0, dragSrcId);
+                        await saveTabOrder(ids);
+                    }
+                    dragSrcId = null;
+                });
+                tab.addEventListener('dragend', () => {
+                    bar.querySelectorAll('.acct-tab').forEach(t => t.classList.remove('drag-over'));
+                    dragSrcId = null;
+                });
+            });
+        }
+
+        async function saveTabOrder(orderedIds) {
+            try {
+                const res = await apiFetch(apiUrl('/api/accounts/reorder'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ order: orderedIds }),
+                });
+                if (res.ok) {
+                    await loadAccounts();
+                }
+            } catch (e) {
+                showToast('Failed to save tab order', 'error');
+            }
+        }
+
+        function escHtml(str) {
+            return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
         }
 
         // ── Init ────────────────────────────────────────────────────────

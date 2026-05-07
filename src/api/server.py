@@ -40,9 +40,9 @@ from ..config_loader import load_yaml_config, resolve_config_path
 from ..forex_service import get_rates_to
 from ..main import run_pipeline, setup_logging
 from ..market_hours import get_tickers_needing_refresh
-from ..models import DEFAULT_CURRENCIES, Position, PositionsFile, TransactionRecord, TransactionsFile
+from ..models import DEFAULT_CURRENCIES, Account, AccountsFile, Position, PositionsFile, TransactionRecord, TransactionsFile
 from ..positions_loader import load_positions, save_positions
-from ..portfolio_ledger import compute_pnl
+from ..portfolio_ledger import compute_pnl, derive_positions_from_transactions
 from ..price_service import get_option_price, get_prices
 from ..profile_manager import (
     create_profile,
@@ -51,7 +51,15 @@ from ..profile_manager import (
     list_profiles,
     update_profile_settings,
 )
-from ..transactions_loader import load_transactions, save_transactions
+from ..accounts_manager import (
+    delete_account,
+    get_account_transactions_path,
+    has_account_transactions,
+    load_accounts,
+    load_all_account_transactions,
+    save_accounts,
+)
+from ..transactions_loader import load_all_profile_transactions, load_transactions, save_transactions
 
 load_dotenv()
 setup_logging(os.getenv("LOG_LEVEL", "INFO"))
@@ -398,27 +406,53 @@ async def get_positions(
     profile: str | None = None,
     user: dict = Depends(require_auth),
 ):
-    """Get current positions with live prices and computed weights."""
+    """Get current positions with live prices and computed weights.
+
+    When the profile has account-based transactions, positions are derived
+    and aggregated from all accounts. Falls back to positions.yaml otherwise.
+    """
     positions_path = _resolve_positions_path(profile)
-    try:
-        pf = load_positions(positions_path)
+    source = "manual"
 
-        # Smart refresh: re-fetch stale prices during market hours (skip cash)
-        tickers_currencies = [
-            (p.ticker, p.currency) for p in pf.positions if p.position_type != "cash"
-        ]
-        stale = get_tickers_needing_refresh(tickers_currencies, profile=profile)
-        if stale:
-            get_prices(stale)  # fetches & updates cache
+    # Derive positions from account transactions when available
+    if profile and has_account_transactions(profile):
+        try:
+            all_txs = load_all_account_transactions(profile)
+            if all_txs:
+                try:
+                    existing_pf = load_positions(positions_path)
+                    currencies = existing_pf.currencies
+                except FileNotFoundError:
+                    currencies = None
+                pf = derive_positions_from_transactions(all_txs, currencies)
+                source = "ledger"
+        except Exception as e:
+            logger.warning(f"Failed to derive positions from accounts: {e}")
+            source = "manual"
 
-        return _build_positions_response(pf, display_currency.upper())
-    except FileNotFoundError:
-        return {
-            "positions": [],
-            "total_value": 0,
-            "display_currency": display_currency.upper(),
-            "currencies": list(DEFAULT_CURRENCIES),
-        }
+    if source == "manual":
+        try:
+            pf = load_positions(positions_path)
+        except FileNotFoundError:
+            return {
+                "positions": [],
+                "total_value": 0,
+                "display_currency": display_currency.upper(),
+                "currencies": list(DEFAULT_CURRENCIES),
+                "source": "manual",
+            }
+
+    # Smart refresh: re-fetch stale prices during market hours (skip cash)
+    tickers_currencies = [
+        (p.ticker, p.currency) for p in pf.positions if p.position_type != "cash"
+    ]
+    stale = get_tickers_needing_refresh(tickers_currencies, profile=profile)
+    if stale:
+        get_prices(stale)
+
+    resp = _build_positions_response(pf, display_currency.upper())
+    resp["source"] = source
+    return resp
 
 
 @app.put("/api/positions")
@@ -844,16 +878,141 @@ async def delete_output(
         raise HTTPException(status_code=500, detail=f"Failed to delete: {e}")
 
 
+# ── Account management endpoints ─────────────────────────────────────────────
+
+
+class AccountCreate(BaseModel):
+    name: str
+    currency: str = "USD"
+    description: str = ""
+
+
+class AccountUpdate(BaseModel):
+    name: str | None = None
+    currency: str | None = None
+    description: str | None = None
+    order: int | None = None
+
+
+class AccountsReorder(BaseModel):
+    order: list[str]  # list of account IDs in desired order
+
+
+@app.get("/api/accounts")
+async def list_accounts_endpoint(
+    profile: str | None = None,
+    user: dict = Depends(require_auth),
+):
+    """List all accounts for a profile, sorted by order."""
+    if not profile:
+        raise HTTPException(status_code=400, detail="profile parameter is required")
+    accts = load_accounts(profile)
+    return {"accounts": [a.model_dump() for a in accts.accounts]}
+
+
+@app.post("/api/accounts")
+async def create_account_endpoint(
+    body: AccountCreate,
+    profile: str | None = None,
+    user: dict = Depends(require_auth),
+):
+    """Create a new account for a profile."""
+    if not profile:
+        raise HTTPException(status_code=400, detail="profile parameter is required")
+    accts = load_accounts(profile)
+    new_account = Account(
+        name=body.name,
+        currency=body.currency,
+        description=body.description,
+        order=len(accts.accounts),
+    )
+    accts.accounts.append(new_account)
+    save_accounts(accts, profile)
+    return {"status": "created", "account": new_account.model_dump()}
+
+
+@app.put("/api/accounts/{account_id}")
+async def update_account_endpoint(
+    account_id: str,
+    body: AccountUpdate,
+    profile: str | None = None,
+    user: dict = Depends(require_auth),
+):
+    """Update an account's name, currency, description, or order."""
+    if not profile:
+        raise HTTPException(status_code=400, detail="profile parameter is required")
+    accts = load_accounts(profile)
+    for acct in accts.accounts:
+        if acct.id == account_id:
+            if body.name is not None:
+                acct.name = body.name
+            if body.currency is not None:
+                acct.currency = body.currency
+            if body.description is not None:
+                acct.description = body.description
+            if body.order is not None:
+                acct.order = body.order
+            save_accounts(accts, profile)
+            return {"status": "updated", "account": acct.model_dump()}
+    raise HTTPException(status_code=404, detail=f"Account '{account_id}' not found")
+
+
+@app.delete("/api/accounts/{account_id}")
+async def delete_account_endpoint(
+    account_id: str,
+    profile: str | None = None,
+    user: dict = Depends(require_auth),
+):
+    """Delete an account and all its transactions."""
+    if not profile:
+        raise HTTPException(status_code=400, detail="profile parameter is required")
+    removed = delete_account(profile, account_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"Account '{account_id}' not found")
+    return {"status": "deleted", "id": account_id}
+
+
+@app.post("/api/accounts/reorder")
+async def reorder_accounts_endpoint(
+    body: AccountsReorder,
+    profile: str | None = None,
+    user: dict = Depends(require_auth),
+):
+    """Update the display order of accounts.
+
+    Body: { "order": ["id1", "id2", "id3"] } — full list of IDs in desired order.
+    """
+    if not profile:
+        raise HTTPException(status_code=400, detail="profile parameter is required")
+    accts = load_accounts(profile)
+    id_to_acct = {a.id: a for a in accts.accounts}
+    ordered = []
+    for i, acct_id in enumerate(body.order):
+        if acct_id in id_to_acct:
+            id_to_acct[acct_id].order = i
+            ordered.append(id_to_acct[acct_id])
+    # Append any accounts not in the order list (safety)
+    seen = set(body.order)
+    for a in accts.accounts:
+        if a.id not in seen:
+            a.order = len(ordered)
+            ordered.append(a)
+    accts.accounts = ordered
+    save_accounts(accts, profile)
+    return {"status": "reordered", "accounts": [a.model_dump() for a in accts.accounts]}
+
+
 # ── Transaction ledger endpoints ─────────────────────────────────────────────
 
 
 @app.get("/api/transactions")
 async def list_transactions_endpoint(
     profile: str | None = None,
+    account_id: str | None = None,
     user: dict = Depends(require_auth),
 ):
-    """List all transactions for a profile, sorted newest-first."""
-    txs = load_transactions(profile=profile)
+    """List transactions for a profile/account, sorted newest-first."""
+    txs = load_transactions(profile=profile, account_id=account_id)
     sorted_txs = sorted(txs.transactions, key=lambda t: t.date, reverse=True)
     return {"transactions": [t.model_dump() for t in sorted_txs]}
 
@@ -862,9 +1021,10 @@ async def list_transactions_endpoint(
 async def add_transaction_endpoint(
     body: TransactionCreate,
     profile: str | None = None,
+    account_id: str | None = None,
     user: dict = Depends(require_auth),
 ):
-    """Add a new transaction to the ledger."""
+    """Add a new transaction to the ledger (profile-root or account-scoped)."""
     from datetime import date as _date
     try:
         record = TransactionRecord(
@@ -886,9 +1046,9 @@ async def add_transaction_endpoint(
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e))
 
-    txs = load_transactions(profile=profile)
+    txs = load_transactions(profile=profile, account_id=account_id)
     txs.transactions.append(record)
-    save_transactions(txs, profile=profile)
+    save_transactions(txs, profile=profile, account_id=account_id)
     return {"status": "created", "transaction": record.model_dump()}
 
 
@@ -897,11 +1057,12 @@ async def update_transaction_endpoint(
     tx_id: str,
     body: TransactionCreate,
     profile: str | None = None,
+    account_id: str | None = None,
     user: dict = Depends(require_auth),
 ):
     """Replace an existing transaction by ID."""
     from datetime import date as _date
-    txs = load_transactions(profile=profile)
+    txs = load_transactions(profile=profile, account_id=account_id)
     for i, tx in enumerate(txs.transactions):
         if tx.id == tx_id:
             try:
@@ -925,7 +1086,7 @@ async def update_transaction_endpoint(
             except Exception as e:
                 raise HTTPException(status_code=422, detail=str(e))
             txs.transactions[i] = updated
-            save_transactions(txs, profile=profile)
+            save_transactions(txs, profile=profile, account_id=account_id)
             return {"status": "updated", "transaction": updated.model_dump()}
     raise HTTPException(status_code=404, detail=f"Transaction '{tx_id}' not found")
 
@@ -934,26 +1095,36 @@ async def update_transaction_endpoint(
 async def delete_transaction_endpoint(
     tx_id: str,
     profile: str | None = None,
+    account_id: str | None = None,
     user: dict = Depends(require_auth),
 ):
     """Delete a transaction by ID."""
-    txs = load_transactions(profile=profile)
+    txs = load_transactions(profile=profile, account_id=account_id)
     before = len(txs.transactions)
     txs.transactions = [t for t in txs.transactions if t.id != tx_id]
     if len(txs.transactions) == before:
         raise HTTPException(status_code=404, detail=f"Transaction '{tx_id}' not found")
-    save_transactions(txs, profile=profile)
+    save_transactions(txs, profile=profile, account_id=account_id)
     return {"status": "deleted", "id": tx_id}
 
 
 @app.get("/api/pnl")
 async def get_pnl_endpoint(
     profile: str | None = None,
+    account_id: str | None = None,
     display_currency: str = "USD",
     user: dict = Depends(require_auth),
 ):
-    """Compute and return portfolio P&L from the transaction ledger."""
-    txs = load_transactions(profile=profile)
+    """Compute and return P&L.
+
+    If account_id is given, computes P&L for that specific account.
+    Otherwise, aggregates across all accounts (or legacy transactions.yaml).
+    """
+    if account_id:
+        txs = load_transactions(profile=profile, account_id=account_id)
+    else:
+        txs = load_all_profile_transactions(profile=profile)
+
     if not txs.transactions:
         return {"pnl": None, "message": "No transactions recorded yet"}
 
