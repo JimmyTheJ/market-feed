@@ -824,6 +824,118 @@
             .add-form { flex-direction: column; }
             .add-form input { min-width: 100%; }
         }
+
+        /* ── Ledger / P&L tab ────────────────────────────────────────── */
+        .pnl-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .pnl-card {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 12px 14px;
+        }
+        .pnl-card .pnl-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            margin-bottom: 4px;
+        }
+        .pnl-card .pnl-value {
+            font-size: 18px;
+            font-weight: 700;
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+        .pnl-positive { color: var(--green); }
+        .pnl-negative { color: var(--red); }
+        .pnl-neutral { color: var(--text-muted); }
+
+        .ledger-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .ledger-table th {
+            text-align: left;
+            padding: 6px 8px;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-muted);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            white-space: nowrap;
+        }
+        .ledger-table td {
+            padding: 8px 8px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+        }
+        .ledger-table tr:last-child td { border-bottom: none; }
+        .ledger-table tr:hover td { background: rgba(255,255,255,0.03); }
+        .ledger-action-buy { color: var(--green); font-weight: 600; }
+        .ledger-action-sell { color: var(--red); font-weight: 600; }
+
+        /* ── Transaction modal ───────────────────────────────────────── */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.6);
+            z-index: 200;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-overlay.open { display: flex; }
+        .modal-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px;
+            width: 100%;
+            max-width: 480px;
+            max-height: 90vh;
+            overflow-y: auto;
+            margin: 16px;
+        }
+        .modal-box h3 { font-size: 16px; margin-bottom: 16px; }
+        .modal-field { margin-bottom: 12px; }
+        .modal-field label {
+            display: block;
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+        .modal-field input,
+        .modal-field select {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--bg);
+            color: var(--text);
+            font-size: 14px;
+        }
+        .modal-field input:focus,
+        .modal-field select:focus { outline: none; border-color: var(--accent); }
+        .modal-row { display: flex; gap: 10px; }
+        .modal-row .modal-field { flex: 1; }
+        .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+        .modal-section-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            margin-bottom: 8px;
+            margin-top: 16px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 4px;
+        }
+        .radio-group { display: flex; gap: 16px; }
+        .radio-group label { display: flex; align-items: center; gap: 6px; font-size: 14px; cursor: pointer; }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 </head>
@@ -879,6 +991,7 @@
             <div class="tab" data-tab="charts">Charts</div>
             <div class="tab" data-tab="pipeline">Pipeline</div>
             <div class="tab" data-tab="outputs">Outputs</div>
+            <div class="tab" data-tab="ledger">Ledger</div>
         </div>
 
         <!-- Positions Tab -->
@@ -1049,6 +1162,15 @@
                         </div>
                         <div id="ollama-model-status" style="font-size:12px;color:var(--text-muted);margin-top:6px"></div>
                     </div>
+                    <div>
+                        <div style="font-weight:600;margin-bottom:8px;font-size:14px">Cost Basis Method</div>
+                        <select id="cost-basis-select" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:14px" onchange="updatePipelineSettings()">
+                            <option value="fifo">FIFO</option>
+                            <option value="average_cost">Average Cost</option>
+                            <option value="specific_lot">Specific Lot</option>
+                        </select>
+                        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Affects P&amp;L in Ledger tab.<br>Changing this alters historical P&amp;L.</div>
+                    </div>
                 </div>
             </div>
 
@@ -1072,6 +1194,185 @@
             <div class="card" id="digest-card" style="display: none;">
                 <h2 id="digest-title">Digest</h2>
                 <div class="digest-content" id="digest-content"></div>
+            </div>
+        </div>
+
+        <!-- Ledger Tab -->
+        <div class="tab-content" id="tab-ledger">
+            <!-- P&L Summary -->
+            <div class="card">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                    <h2 style="margin-bottom:0">P&amp;L Summary</h2>
+                    <div style="display:flex;gap:8px;align-items:center">
+                        <select id="pnl-currency" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px" onchange="loadPnl()"></select>
+                        <button class="btn" style="padding:5px 10px;font-size:12px" onclick="loadPnl()">↻</button>
+                    </div>
+                </div>
+                <div class="pnl-cards" id="pnl-summary-cards">
+                    <div style="color:var(--text-muted);font-size:13px">No transactions yet. Add your first trade below.</div>
+                </div>
+            </div>
+
+            <!-- Per-position P&L table -->
+            <div class="card" id="pnl-positions-card" style="display:none">
+                <h2>Open Positions</h2>
+                <div style="overflow-x:auto">
+                    <table class="ledger-table" id="pnl-positions-table">
+                        <thead>
+                            <tr>
+                                <th>Instrument</th>
+                                <th>Qty</th>
+                                <th>Avg Cost</th>
+                                <th>Price</th>
+                                <th>Market Value</th>
+                                <th>Unrealized P&amp;L</th>
+                                <th>%</th>
+                                <th>Realized P&amp;L</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pnl-positions-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Transaction History -->
+            <div class="card">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                    <h2 style="margin-bottom:0">Transactions</h2>
+                    <div style="display:flex;gap:8px;align-items:center">
+                        <input type="text" id="tx-filter-ticker" placeholder="Filter ticker…"
+                               style="width:130px;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:12px"
+                               oninput="renderTransactions()">
+                        <button class="btn btn-primary" style="padding:5px 12px;font-size:12px" onclick="openTxModal()">+ Add</button>
+                    </div>
+                </div>
+                <div style="overflow-x:auto">
+                    <table class="ledger-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Ticker</th>
+                                <th>Action</th>
+                                <th>Qty</th>
+                                <th>Price</th>
+                                <th>Total</th>
+                                <th>Curr.</th>
+                                <th>Type</th>
+                                <th>Notes</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="tx-table-body">
+                            <tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:20px">No transactions yet</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Transaction Add/Edit Modal -->
+    <div class="modal-overlay" id="tx-modal">
+        <div class="modal-box">
+            <h3 id="tx-modal-title">Add Transaction</h3>
+            <input type="hidden" id="tx-modal-id">
+
+            <div class="modal-row">
+                <div class="modal-field">
+                    <label>Date *</label>
+                    <input type="date" id="tx-date">
+                </div>
+                <div class="modal-field">
+                    <label>Ticker *</label>
+                    <input type="text" id="tx-ticker" placeholder="e.g. TSLA" autocomplete="off" style="text-transform:uppercase">
+                </div>
+            </div>
+
+            <div class="modal-section-label">Trade Details</div>
+            <div class="modal-row">
+                <div class="modal-field">
+                    <label>Action *</label>
+                    <div class="radio-group" style="padding-top:6px">
+                        <label><input type="radio" name="tx-action" value="buy" checked> Buy</label>
+                        <label><input type="radio" name="tx-action" value="sell"> Sell</label>
+                    </div>
+                </div>
+                <div class="modal-field">
+                    <label>Position Type</label>
+                    <div class="radio-group" style="padding-top:6px">
+                        <label><input type="radio" name="tx-pos-type" value="equity" checked onchange="toggleTxOptionFields()"> Equity</label>
+                        <label><input type="radio" name="tx-pos-type" value="option" onchange="toggleTxOptionFields()"> Option</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-row">
+                <div class="modal-field">
+                    <label>Quantity *</label>
+                    <input type="number" id="tx-quantity" placeholder="Shares / contracts" min="0.000001" step="any">
+                </div>
+                <div class="modal-field">
+                    <label>Price *</label>
+                    <input type="number" id="tx-price" placeholder="Per share / premium" min="0" step="any">
+                </div>
+            </div>
+
+            <div class="modal-row">
+                <div class="modal-field">
+                    <label>Currency</label>
+                    <select id="tx-currency">
+                        <option value="USD">USD</option>
+                        <option value="CAD">CAD</option>
+                        <option value="BTC">BTC</option>
+                        <option value="EUR">EUR</option>
+                        <option value="GBP">GBP</option>
+                    </select>
+                </div>
+                <div class="modal-field">
+                    <label>Commission</label>
+                    <input type="number" id="tx-commission" placeholder="0.00" min="0" step="any">
+                </div>
+            </div>
+
+            <!-- Option-specific fields (shown conditionally) -->
+            <div id="tx-option-fields" style="display:none">
+                <div class="modal-section-label">Option Details</div>
+                <div class="modal-row">
+                    <div class="modal-field">
+                        <label>Option Type</label>
+                        <div class="radio-group" style="padding-top:6px">
+                            <label><input type="radio" name="tx-opt-type" value="CALL" checked> CALL</label>
+                            <label><input type="radio" name="tx-opt-type" value="PUT"> PUT</label>
+                        </div>
+                    </div>
+                    <div class="modal-field">
+                        <label>Direction</label>
+                        <div class="radio-group" style="padding-top:6px">
+                            <label><input type="radio" name="tx-opt-dir" value="LONG" checked> LONG</label>
+                            <label><input type="radio" name="tx-opt-dir" value="SHORT"> SHORT</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-row">
+                    <div class="modal-field">
+                        <label>Strike</label>
+                        <input type="number" id="tx-strike" placeholder="e.g. 300" min="0" step="any">
+                    </div>
+                    <div class="modal-field">
+                        <label>Expiration</label>
+                        <input type="date" id="tx-expiration">
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-field" style="margin-top:8px">
+                <label>Notes</label>
+                <input type="text" id="tx-notes" placeholder="Optional notes">
+            </div>
+
+            <div class="modal-actions">
+                <button class="btn" onclick="closeTxModal()">Cancel</button>
+                <button class="btn btn-primary" id="tx-save-btn" onclick="saveTxModal()">Save</button>
             </div>
         </div>
     </div>
@@ -1380,6 +1681,7 @@
                 if (tab.dataset.tab === 'outputs') loadOutputs();
                 if (tab.dataset.tab === 'pipeline') loadSchedule();
                 if (tab.dataset.tab === 'charts') renderChart();
+                if (tab.dataset.tab === 'ledger') { loadTransactions(); loadPnl(); }
             });
         });
 
@@ -1405,6 +1707,7 @@
             const displaySel = document.getElementById('display-currency');
             const addSel = document.getElementById('new-currency');
             const chartSel = document.getElementById('chart-currency');
+            const pnlSel = document.getElementById('pnl-currency');
 
             displaySel.innerHTML = currencies.map(c =>
                 `<option value="${c}" ${c === displayCurrency ? 'selected' : ''}>${c}</option>`
@@ -1416,6 +1719,12 @@
 
             if (chartSel) {
                 chartSel.innerHTML = currencies.map(c =>
+                    `<option value="${c}" ${c === displayCurrency ? 'selected' : ''}>${c}</option>`
+                ).join('');
+            }
+
+            if (pnlSel) {
+                pnlSel.innerHTML = currencies.map(c =>
                     `<option value="${c}" ${c === displayCurrency ? 'selected' : ''}>${c}</option>`
                 ).join('');
             }
@@ -1974,6 +2283,11 @@
             // Set after models load; pre-set value so loadOllamaModels can match it
             sel.dataset.savedModel = savedModel;
             if (!sel.dataset.loaded) loadOllamaModels();
+
+            // Restore cost basis method
+            const savedCostBasis = currentProfile.cost_basis_method || 'fifo';
+            const costSel = document.getElementById('cost-basis-select');
+            if (costSel) costSel.value = savedCostBasis;
         }
 
         async function loadOllamaModels() {
@@ -2010,11 +2324,12 @@
             const schedulerEnabled = document.querySelector('input[name="scheduler-enabled"]:checked')?.value === 'on';
             const useOllama = document.querySelector('input[name="summary-mode"]:checked')?.value === 'ai';
             const ollamaModel = document.getElementById('ollama-model-select')?.value || null;
+            const costBasisMethod = document.getElementById('cost-basis-select')?.value || 'fifo';
             try {
                 const res = await apiFetch(API + `/api/profiles/${currentProfile.id}/settings`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ scheduler_enabled: schedulerEnabled, use_ollama: useOllama, ollama_model: ollamaModel }),
+                    body: JSON.stringify({ scheduler_enabled: schedulerEnabled, use_ollama: useOllama, ollama_model: ollamaModel, cost_basis_method: costBasisMethod }),
                 });
                 if (res.ok) {
                     const data = await res.json();
@@ -2114,6 +2429,275 @@
                 .replace(/^\d+\. (.+)$/gm, (m, p1, offset, str) => `  → ${p1}`)
                 .replace(/\n\n/g, '<br><br>')
                 .replace(/\n/g, '<br>');
+        }
+
+        // ── Ledger / Transactions ────────────────────────────────────────
+
+        let currentTransactions = [];
+        let currentPnl = null;
+
+        function toggleTxOptionFields() {
+            const isOption = document.querySelector('input[name="tx-pos-type"]:checked')?.value === 'option';
+            document.getElementById('tx-option-fields').style.display = isOption ? 'block' : 'none';
+        }
+
+        function openTxModal(txId = null) {
+            const modal = document.getElementById('tx-modal');
+            const title = document.getElementById('tx-modal-title');
+            document.getElementById('tx-modal-id').value = txId || '';
+
+            if (txId) {
+                const tx = currentTransactions.find(t => t.id === txId);
+                if (!tx) return;
+                title.textContent = 'Edit Transaction';
+                document.getElementById('tx-date').value = typeof tx.date === 'string' ? tx.date : tx.date;
+                document.getElementById('tx-ticker').value = tx.ticker;
+                document.querySelector(`input[name="tx-action"][value="${tx.action}"]`).checked = true;
+                document.querySelector(`input[name="tx-pos-type"][value="${tx.position_type}"]`).checked = true;
+                document.getElementById('tx-quantity').value = tx.quantity;
+                document.getElementById('tx-price').value = tx.price;
+                document.getElementById('tx-currency').value = tx.currency;
+                document.getElementById('tx-commission').value = tx.commission || 0;
+                document.getElementById('tx-notes').value = tx.notes || '';
+                if (tx.position_type === 'option') {
+                    if (tx.option_type) document.querySelector(`input[name="tx-opt-type"][value="${tx.option_type}"]`).checked = true;
+                    if (tx.option_direction) document.querySelector(`input[name="tx-opt-dir"][value="${tx.option_direction}"]`).checked = true;
+                    document.getElementById('tx-strike').value = tx.strike || '';
+                    document.getElementById('tx-expiration').value = tx.expiration || '';
+                }
+            } else {
+                title.textContent = 'Add Transaction';
+                document.getElementById('tx-date').value = new Date().toISOString().split('T')[0];
+                document.getElementById('tx-ticker').value = '';
+                document.querySelector('input[name="tx-action"][value="buy"]').checked = true;
+                document.querySelector('input[name="tx-pos-type"][value="equity"]').checked = true;
+                document.getElementById('tx-quantity').value = '';
+                document.getElementById('tx-price').value = '';
+                document.getElementById('tx-currency').value = currentProfile?.default_currency || 'USD';
+                document.getElementById('tx-commission').value = '0';
+                document.getElementById('tx-notes').value = '';
+                document.querySelector('input[name="tx-opt-type"][value="CALL"]').checked = true;
+                document.querySelector('input[name="tx-opt-dir"][value="LONG"]').checked = true;
+                document.getElementById('tx-strike').value = '';
+                document.getElementById('tx-expiration').value = '';
+            }
+            toggleTxOptionFields();
+            modal.classList.add('open');
+        }
+
+        function closeTxModal() {
+            document.getElementById('tx-modal').classList.remove('open');
+        }
+
+        async function saveTxModal() {
+            const txId = document.getElementById('tx-modal-id').value;
+            const isOption = document.querySelector('input[name="tx-pos-type"]:checked')?.value === 'option';
+
+            const payload = {
+                date: document.getElementById('tx-date').value,
+                ticker: document.getElementById('tx-ticker').value.trim().toUpperCase(),
+                action: document.querySelector('input[name="tx-action"]:checked')?.value || 'buy',
+                quantity: parseFloat(document.getElementById('tx-quantity').value),
+                price: parseFloat(document.getElementById('tx-price').value),
+                currency: document.getElementById('tx-currency').value,
+                commission: parseFloat(document.getElementById('tx-commission').value) || 0,
+                position_type: isOption ? 'option' : 'equity',
+                notes: document.getElementById('tx-notes').value.trim(),
+                option_type: isOption ? (document.querySelector('input[name="tx-opt-type"]:checked')?.value || 'CALL') : null,
+                option_direction: isOption ? (document.querySelector('input[name="tx-opt-dir"]:checked')?.value || 'LONG') : null,
+                strike: isOption ? (parseFloat(document.getElementById('tx-strike').value) || null) : null,
+                expiration: isOption ? (document.getElementById('tx-expiration').value || null) : null,
+            };
+
+            if (!payload.date) { showToast('Select a date', 'error'); return; }
+            if (!payload.ticker) { showToast('Enter a ticker', 'error'); return; }
+            if (isNaN(payload.quantity) || payload.quantity <= 0) { showToast('Enter a valid quantity', 'error'); return; }
+            if (isNaN(payload.price) || payload.price < 0) { showToast('Enter a valid price', 'error'); return; }
+            if (isOption && (!payload.strike || !payload.expiration)) { showToast('Enter strike and expiration for options', 'error'); return; }
+
+            const btn = document.getElementById('tx-save-btn');
+            btn.disabled = true;
+            btn.textContent = 'Saving…';
+
+            try {
+                const url = txId
+                    ? apiUrl(`/api/transactions/${txId}`)
+                    : apiUrl('/api/transactions');
+                const method = txId ? 'PUT' : 'POST';
+                const res = await apiFetch(url, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                if (res.ok) {
+                    closeTxModal();
+                    showToast(txId ? 'Transaction updated' : 'Transaction added');
+                    await loadTransactions();
+                    loadPnl();
+                } else {
+                    const err = await res.json();
+                    showToast(err.detail || 'Failed to save transaction', 'error');
+                }
+            } catch (e) {
+                showToast('Network error', 'error');
+            }
+            btn.disabled = false;
+            btn.textContent = 'Save';
+        }
+
+        async function deleteTx(txId) {
+            const tx = currentTransactions.find(t => t.id === txId);
+            const label = tx ? `${tx.action.toUpperCase()} ${tx.quantity} ${tx.ticker} on ${tx.date}` : txId;
+            if (!confirm(`Delete transaction: ${label}?`)) return;
+            try {
+                const res = await apiFetch(apiUrl(`/api/transactions/${txId}`), { method: 'DELETE' });
+                if (res.ok) {
+                    showToast('Transaction deleted');
+                    await loadTransactions();
+                    loadPnl();
+                } else {
+                    const err = await res.json();
+                    showToast(err.detail || 'Failed to delete', 'error');
+                }
+            } catch (e) {
+                showToast('Network error', 'error');
+            }
+        }
+
+        async function loadTransactions() {
+            try {
+                const res = await apiFetch(apiUrl('/api/transactions'));
+                const data = await res.json();
+                currentTransactions = data.transactions || [];
+                renderTransactions();
+            } catch (e) {
+                document.getElementById('tx-table-body').innerHTML =
+                    '<tr><td colspan="10" style="color:var(--red);text-align:center;padding:16px">Failed to load transactions</td></tr>';
+            }
+        }
+
+        function renderTransactions() {
+            const tbody = document.getElementById('tx-table-body');
+            const filter = document.getElementById('tx-filter-ticker')?.value.trim().toUpperCase() || '';
+            const txs = filter
+                ? currentTransactions.filter(t => t.ticker.includes(filter))
+                : currentTransactions;
+
+            if (!txs.length) {
+                tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:20px">${filter ? 'No transactions match filter' : 'No transactions yet'}</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = txs.map(tx => {
+                const total = (tx.quantity * tx.price * (tx.position_type === 'option' ? 100 : 1)).toFixed(2);
+                const actionClass = tx.action === 'buy' ? 'ledger-action-buy' : 'ledger-action-sell';
+                const typeLabel = tx.position_type === 'option'
+                    ? `${tx.option_type} ${tx.strike} ${tx.expiration ? tx.expiration.slice(0, 7) : ''}`
+                    : 'equity';
+                return `<tr>
+                    <td style="white-space:nowrap">${tx.date}</td>
+                    <td style="font-weight:700;font-family:'SF Mono',monospace">${tx.ticker}</td>
+                    <td class="${actionClass}">${tx.action.toUpperCase()}</td>
+                    <td>${tx.quantity}</td>
+                    <td>${tx.price}</td>
+                    <td>${total}</td>
+                    <td>${tx.currency}</td>
+                    <td style="font-size:11px;color:var(--text-muted)">${typeLabel}</td>
+                    <td style="font-size:11px;color:var(--text-muted);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${tx.notes || ''}</td>
+                    <td style="white-space:nowrap">
+                        <button class="btn btn-small" onclick="openTxModal('${tx.id}')" title="Edit" style="padding:3px 7px;font-size:11px">✎</button>
+                        <button class="btn btn-small btn-danger" onclick="deleteTx('${tx.id}')" title="Delete" style="padding:3px 7px;font-size:11px;margin-left:4px">✕</button>
+                    </td>
+                </tr>`;
+            }).join('');
+        }
+
+        async function loadPnl() {
+            const currSel = document.getElementById('pnl-currency');
+            const dispCurrency = currSel?.value || displayCurrency || 'USD';
+            try {
+                const res = await apiFetch(apiUrl('/api/pnl', `display_currency=${dispCurrency}`));
+                const data = await res.json();
+                currentPnl = data.pnl;
+                renderPnl(currentPnl);
+            } catch (e) {
+                document.getElementById('pnl-summary-cards').innerHTML =
+                    '<div style="color:var(--red)">Failed to load P&L data</div>';
+            }
+        }
+
+        function fmtPnl(val, currency) {
+            if (val === null || val === undefined) return '—';
+            const sym = currencySymbol(currency);
+            const prefix = val >= 0 ? '+' : '';
+            return `${prefix}${sym}${Math.abs(val).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+        }
+
+        function pnlClass(val) {
+            if (val === null || val === undefined) return 'pnl-neutral';
+            return val >= 0 ? 'pnl-positive' : 'pnl-negative';
+        }
+
+        function renderPnl(pnl) {
+            const cards = document.getElementById('pnl-summary-cards');
+            const posCard = document.getElementById('pnl-positions-card');
+
+            if (!pnl) {
+                cards.innerHTML = '<div style="color:var(--text-muted);font-size:13px">No transactions yet. Add your first trade below.</div>';
+                posCard.style.display = 'none';
+                return;
+            }
+
+            const c = pnl.display_currency;
+            const sym = currencySymbol(c);
+            cards.innerHTML = `
+                <div class="pnl-card">
+                    <div class="pnl-label">Cost Basis</div>
+                    <div class="pnl-value pnl-neutral">${sym}${(pnl.total_cost_basis || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+                </div>
+                <div class="pnl-card">
+                    <div class="pnl-label">Market Value</div>
+                    <div class="pnl-value pnl-neutral">${pnl.total_market_value !== null ? sym + pnl.total_market_value.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '—'}</div>
+                </div>
+                <div class="pnl-card">
+                    <div class="pnl-label">Unrealized P&amp;L</div>
+                    <div class="pnl-value ${pnlClass(pnl.total_unrealized_pl)}">${fmtPnl(pnl.total_unrealized_pl, c)}</div>
+                </div>
+                <div class="pnl-card">
+                    <div class="pnl-label">Realized P&amp;L</div>
+                    <div class="pnl-value ${pnlClass(pnl.total_realized_pl)}">${fmtPnl(pnl.total_realized_pl, c)}</div>
+                </div>
+                <div class="pnl-card">
+                    <div class="pnl-label">Total P&amp;L</div>
+                    <div class="pnl-value ${pnlClass(pnl.total_pl)}">${fmtPnl(pnl.total_pl, c)}</div>
+                </div>
+            `;
+
+            // Per-position table
+            const openPositions = pnl.positions.filter(p => p.open_quantity > 0);
+            if (openPositions.length > 0) {
+                posCard.style.display = 'block';
+                const tbody = document.getElementById('pnl-positions-body');
+                tbody.innerHTML = pnl.positions.map(pos => {
+                    const label = pos.option_label || pos.ticker;
+                    const unrealizedClass = pnlClass(pos.unrealized_pl_display);
+                    const realizedClass = pnlClass(pos.realized_pl_display);
+                    const pctStr = pos.unrealized_pl_pct !== null && pos.unrealized_pl_pct !== undefined
+                        ? `${pos.unrealized_pl_pct >= 0 ? '+' : ''}${pos.unrealized_pl_pct.toFixed(1)}%` : '—';
+                    return `<tr>
+                        <td style="font-weight:600;font-family:'SF Mono',monospace">${label}</td>
+                        <td>${pos.open_quantity > 0 ? pos.open_quantity : '<span style="color:var(--text-muted)">Closed</span>'}</td>
+                        <td>${pos.avg_cost_basis > 0 ? pos.avg_cost_basis.toFixed(4) : '—'}</td>
+                        <td>${pos.current_price !== null ? pos.current_price : '—'}</td>
+                        <td>${pos.current_value_display !== null ? currencySymbol(c) + pos.current_value_display.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '—'}</td>
+                        <td class="${unrealizedClass}">${fmtPnl(pos.unrealized_pl_display, c)}</td>
+                        <td class="${unrealizedClass}" style="font-size:12px">${pctStr}</td>
+                        <td class="${realizedClass}">${fmtPnl(pos.realized_pl_display, c)}</td>
+                    </tr>`;
+                }).join('');
+            } else {
+                posCard.style.display = 'none';
+            }
         }
 
         // ── Init ────────────────────────────────────────────────────────

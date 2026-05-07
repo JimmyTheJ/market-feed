@@ -224,3 +224,146 @@ class MarketSummary(BaseModel):
     macro_overview: str = ""
     key_themes: list[str] = Field(default_factory=list)
     llm_used: bool = False
+
+
+# ── Transaction / Ledger models ───────────────────────────────────────────────
+
+
+class TransactionRecord(BaseModel):
+    """A single trade transaction (buy or sell) in the portfolio ledger."""
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    date: date
+    ticker: str
+    action: str  # "buy" or "sell"
+    quantity: float  # always positive; direction is determined by action
+    price: float  # price per share for equity; premium per share for options
+    currency: str = "USD"
+    commission: float = 0.0  # total brokerage commission/fees
+    position_type: str = "equity"  # "equity" or "option"
+    option_type: Optional[str] = None  # "CALL" or "PUT"
+    option_direction: Optional[str] = None  # "LONG" or "SHORT" at trade open
+    strike: Optional[float] = None
+    expiration: Optional[str] = None  # ISO date string e.g. "2026-06-20"
+    lot_id: Optional[str] = None  # for specific-lot sells, references the buy tx id
+    notes: str = ""
+
+    @field_validator("ticker")
+    @classmethod
+    def ticker_not_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("ticker must be non-empty")
+        return v.strip().upper()
+
+    @field_validator("action")
+    @classmethod
+    def valid_action(cls, v: str) -> str:
+        v = v.lower().strip()
+        if v not in ("buy", "sell"):
+            raise ValueError("action must be 'buy' or 'sell'")
+        return v
+
+    @field_validator("quantity")
+    @classmethod
+    def quantity_positive(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("quantity must be positive")
+        return float(v)
+
+    @field_validator("price")
+    @classmethod
+    def price_non_negative(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("price must be non-negative")
+        return float(v)
+
+    @field_validator("commission")
+    @classmethod
+    def commission_non_negative(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("commission must be non-negative")
+        return float(v)
+
+    @field_validator("position_type")
+    @classmethod
+    def valid_tx_position_type(cls, v: str) -> str:
+        v = v.lower().strip()
+        if v not in ("equity", "option"):
+            raise ValueError("position_type must be 'equity' or 'option'")
+        return v
+
+    @field_validator("option_type")
+    @classmethod
+    def valid_tx_option_type(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.upper().strip()
+        if v not in ("CALL", "PUT"):
+            raise ValueError("option_type must be 'CALL' or 'PUT'")
+        return v
+
+    @field_validator("option_direction")
+    @classmethod
+    def valid_tx_option_direction(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.upper().strip()
+        if v not in ("LONG", "SHORT"):
+            raise ValueError("option_direction must be 'LONG' or 'SHORT'")
+        return v
+
+
+class TransactionsFile(BaseModel):
+    """The full transactions.yaml structure for a profile."""
+
+    transactions: list[TransactionRecord] = Field(default_factory=list)
+
+
+class PositionPnL(BaseModel):
+    """P&L summary for a single instrument (equity or option contract)."""
+
+    instrument_key: str  # e.g. "TSLA__equity" or "TSLA__CALL_300_2026-06-20"
+    ticker: str
+    position_type: str  # "equity" or "option"
+    option_label: str = ""  # human-readable for options e.g. "TSLA $300 CALL exp 2026-06-20"
+    currency: str  # native trade currency
+
+    # Open position
+    open_quantity: float = 0.0  # 0 if fully closed
+    avg_cost_basis: float = 0.0  # per unit (per share; or per-share-premium for options)
+    total_cost_basis_native: float = 0.0  # total cost in native currency (incl. multiplier)
+
+    # Current market data
+    current_price: Optional[float] = None
+    current_value_native: Optional[float] = None
+
+    # P&L in native currency
+    realized_pl_native: float = 0.0
+    unrealized_pl_native: Optional[float] = None
+    total_pl_native: Optional[float] = None
+    unrealized_pl_pct: Optional[float] = None
+
+    # P&L in display currency
+    fx_rate: float = 1.0
+    total_cost_basis_display: float = 0.0
+    realized_pl_display: float = 0.0
+    unrealized_pl_display: Optional[float] = None
+    total_pl_display: Optional[float] = None
+    current_value_display: Optional[float] = None
+    display_currency: str = "USD"
+
+
+class PortfolioPnL(BaseModel):
+    """Portfolio-wide P&L summary."""
+
+    computed_at: datetime
+    cost_basis_method: str
+    display_currency: str
+    positions: list[PositionPnL] = Field(default_factory=list)
+
+    # Totals in display currency
+    total_cost_basis: float = 0.0
+    total_market_value: Optional[float] = None
+    total_realized_pl: float = 0.0
+    total_unrealized_pl: Optional[float] = None
+    total_pl: Optional[float] = None

@@ -89,3 +89,10 @@ price_refresh:
     - AVAX
     - LINK
     - MATIC
+
+# Portfolio tracking
+portfolio:
+  # Cost basis method for P&L computation.
+  # Options: fifo | average_cost | specific_lot
+  # Changing this after transactions are recorded affects historical P&L.
+  cost_basis_method: fifo

@@ -40,8 +40,9 @@ from ..config_loader import load_yaml_config, resolve_config_path
 from ..forex_service import get_rates_to
 from ..main import run_pipeline, setup_logging
 from ..market_hours import get_tickers_needing_refresh
-from ..models import DEFAULT_CURRENCIES, Position, PositionsFile
+from ..models import DEFAULT_CURRENCIES, Position, PositionsFile, TransactionRecord, TransactionsFile
 from ..positions_loader import load_positions, save_positions
+from ..portfolio_ledger import compute_pnl
 from ..price_service import get_option_price, get_prices
 from ..profile_manager import (
     create_profile,
@@ -50,6 +51,7 @@ from ..profile_manager import (
     list_profiles,
     update_profile_settings,
 )
+from ..transactions_loader import load_transactions, save_transactions
 
 load_dotenv()
 setup_logging(os.getenv("LOG_LEVEL", "INFO"))
@@ -225,6 +227,26 @@ class ProfileSettingsUpdate(BaseModel):
     scheduler_enabled: Optional[bool] = None
     use_ollama: Optional[bool] = None
     ollama_model: Optional[str] = None
+    cost_basis_method: Optional[str] = None  # fifo | average_cost | specific_lot
+
+
+class TransactionCreate(BaseModel):
+    """Request body for creating or updating a transaction."""
+
+    date: str  # ISO date string e.g. "2024-03-15"
+    ticker: str
+    action: str  # "buy" or "sell"
+    quantity: float
+    price: float
+    currency: str = "USD"
+    commission: float = 0.0
+    position_type: str = "equity"
+    option_type: Optional[str] = None
+    option_direction: Optional[str] = None
+    strike: Optional[float] = None
+    expiration: Optional[str] = None
+    lot_id: Optional[str] = None
+    notes: str = ""
 
 
 class PipelineRunRequest(BaseModel):
@@ -613,7 +635,7 @@ async def update_profile_pipeline_settings(
     body: ProfileSettingsUpdate,
     user: dict = Depends(require_auth),
 ):
-    """Update pipeline settings (scheduler_enabled, use_ollama, ollama_model) for a profile."""
+    """Update pipeline settings for a profile."""
     settings = {}
     if body.scheduler_enabled is not None:
         settings["scheduler_enabled"] = body.scheduler_enabled
@@ -621,10 +643,46 @@ async def update_profile_pipeline_settings(
         settings["use_ollama"] = body.use_ollama
     if body.ollama_model is not None:
         settings["ollama_model"] = body.ollama_model
+
+    # cost_basis_method is stored in the profile's settings.yaml, not profiles.yaml
+    if body.cost_basis_method is not None:
+        valid = {"fifo", "average_cost", "specific_lot"}
+        if body.cost_basis_method not in valid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"cost_basis_method must be one of: {', '.join(sorted(valid))}",
+            )
+        _update_settings_yaml(profile_id, {"portfolio": {"cost_basis_method": body.cost_basis_method}})
+
     updated = update_profile_settings(profile_id, settings)
     if not updated:
         raise HTTPException(status_code=404, detail=f"Profile '{profile_id}' not found")
     return {"status": "updated", "profile": updated}
+
+
+def _update_settings_yaml(profile_id: str, updates: dict) -> None:
+    """Deep-merge *updates* into the profile's settings.yaml."""
+    from pathlib import Path
+    settings_path = Path(f"config/profiles/{profile_id}/settings.yaml")
+    if settings_path.exists():
+        with open(settings_path) as f:
+            data = yaml.safe_load(f) or {}
+    else:
+        data = {}
+
+    def _deep_merge(base: dict, override: dict) -> dict:
+        for k, v in override.items():
+            if isinstance(v, dict) and isinstance(base.get(k), dict):
+                base[k] = _deep_merge(base[k], v)
+            else:
+                base[k] = v
+        return base
+
+    data = _deep_merge(data, updates)
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(settings_path, "w") as f:
+        yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+
 
 
 @app.post("/api/pipeline/run")
@@ -784,3 +842,135 @@ async def delete_output(
         return {"status": "deleted", "dir_name": dir_name}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete: {e}")
+
+
+# ── Transaction ledger endpoints ─────────────────────────────────────────────
+
+
+@app.get("/api/transactions")
+async def list_transactions_endpoint(
+    profile: str | None = None,
+    user: dict = Depends(require_auth),
+):
+    """List all transactions for a profile, sorted newest-first."""
+    txs = load_transactions(profile=profile)
+    sorted_txs = sorted(txs.transactions, key=lambda t: t.date, reverse=True)
+    return {"transactions": [t.model_dump() for t in sorted_txs]}
+
+
+@app.post("/api/transactions")
+async def add_transaction_endpoint(
+    body: TransactionCreate,
+    profile: str | None = None,
+    user: dict = Depends(require_auth),
+):
+    """Add a new transaction to the ledger."""
+    from datetime import date as _date
+    try:
+        record = TransactionRecord(
+            date=_date.fromisoformat(body.date),
+            ticker=body.ticker,
+            action=body.action,
+            quantity=body.quantity,
+            price=body.price,
+            currency=body.currency,
+            commission=body.commission,
+            position_type=body.position_type,
+            option_type=body.option_type,
+            option_direction=body.option_direction,
+            strike=body.strike,
+            expiration=body.expiration,
+            lot_id=body.lot_id,
+            notes=body.notes,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    txs = load_transactions(profile=profile)
+    txs.transactions.append(record)
+    save_transactions(txs, profile=profile)
+    return {"status": "created", "transaction": record.model_dump()}
+
+
+@app.put("/api/transactions/{tx_id}")
+async def update_transaction_endpoint(
+    tx_id: str,
+    body: TransactionCreate,
+    profile: str | None = None,
+    user: dict = Depends(require_auth),
+):
+    """Replace an existing transaction by ID."""
+    from datetime import date as _date
+    txs = load_transactions(profile=profile)
+    for i, tx in enumerate(txs.transactions):
+        if tx.id == tx_id:
+            try:
+                updated = TransactionRecord(
+                    id=tx_id,
+                    date=_date.fromisoformat(body.date),
+                    ticker=body.ticker,
+                    action=body.action,
+                    quantity=body.quantity,
+                    price=body.price,
+                    currency=body.currency,
+                    commission=body.commission,
+                    position_type=body.position_type,
+                    option_type=body.option_type,
+                    option_direction=body.option_direction,
+                    strike=body.strike,
+                    expiration=body.expiration,
+                    lot_id=body.lot_id,
+                    notes=body.notes,
+                )
+            except Exception as e:
+                raise HTTPException(status_code=422, detail=str(e))
+            txs.transactions[i] = updated
+            save_transactions(txs, profile=profile)
+            return {"status": "updated", "transaction": updated.model_dump()}
+    raise HTTPException(status_code=404, detail=f"Transaction '{tx_id}' not found")
+
+
+@app.delete("/api/transactions/{tx_id}")
+async def delete_transaction_endpoint(
+    tx_id: str,
+    profile: str | None = None,
+    user: dict = Depends(require_auth),
+):
+    """Delete a transaction by ID."""
+    txs = load_transactions(profile=profile)
+    before = len(txs.transactions)
+    txs.transactions = [t for t in txs.transactions if t.id != tx_id]
+    if len(txs.transactions) == before:
+        raise HTTPException(status_code=404, detail=f"Transaction '{tx_id}' not found")
+    save_transactions(txs, profile=profile)
+    return {"status": "deleted", "id": tx_id}
+
+
+@app.get("/api/pnl")
+async def get_pnl_endpoint(
+    profile: str | None = None,
+    display_currency: str = "USD",
+    user: dict = Depends(require_auth),
+):
+    """Compute and return portfolio P&L from the transaction ledger."""
+    txs = load_transactions(profile=profile)
+    if not txs.transactions:
+        return {"pnl": None, "message": "No transactions recorded yet"}
+
+    method = "fifo"
+    try:
+        prof_settings = load_yaml_config("settings.yaml", merge_with_defaults=True, profile=profile)
+        method = prof_settings.get("portfolio", {}).get("cost_basis_method", "fifo")
+    except Exception:
+        pass
+
+    tickers = list({t.ticker for t in txs.transactions if t.position_type != "cash"})
+    prices = get_prices(tickers) if tickers else {}
+
+    native_currencies = list({t.currency for t in txs.transactions})
+    if display_currency not in native_currencies:
+        native_currencies.append(display_currency)
+    forex = get_rates_to(display_currency, native_currencies)
+
+    pnl = compute_pnl(txs.transactions, prices, forex, method, display_currency)
+    return {"pnl": pnl.model_dump(), "cost_basis_method": method}

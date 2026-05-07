@@ -27,6 +27,7 @@ from .ingestion import fetch_all_sources, load_sources
 from .metadata_lookup import enrich_all_positions
 from .models import DailyPositionsSnapshot
 from .normalization import normalize_all
+from .portfolio_ledger import derive_positions_from_transactions
 from .positions_loader import load_positions
 from .price_service import get_option_price, get_prices
 from .scoring import score_and_rank, score_for_general_market
@@ -40,6 +41,7 @@ from .storage import (
     write_summary_payload,
 )
 from .summarizer import generate_general_market_summary, generate_portfolio_summary
+from .transactions_loader import has_transactions, load_transactions
 
 load_dotenv()
 
@@ -127,8 +129,25 @@ def run_pipeline(
 
     # Step 2: Load positions
     log("Loading positions...")
-    positions_file = load_positions(positions_path)
-    log(f"Loaded {len(positions_file.positions)} positions")
+    if has_transactions(profile=profile):
+        txs_file = load_transactions(profile=profile)
+        if txs_file.transactions:
+            # Inherit currency list from positions.yaml if it still exists
+            try:
+                existing_pf = load_positions(positions_path)
+                currencies = existing_pf.currencies
+            except Exception:
+                currencies = None
+            positions_file = derive_positions_from_transactions(
+                txs_file.transactions, currencies
+            )
+            log(f"Derived {len(positions_file.positions)} positions from transaction ledger ({len(txs_file.transactions)} transactions)")
+        else:
+            positions_file = load_positions(positions_path)
+            log(f"Loaded {len(positions_file.positions)} positions")
+    else:
+        positions_file = load_positions(positions_path)
+        log(f"Loaded {len(positions_file.positions)} positions")
 
     # Step 2b: Compute portfolio weights from live prices
     log("Fetching live prices for weight computation...")
