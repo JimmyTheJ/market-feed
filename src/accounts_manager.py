@@ -58,6 +58,7 @@ def save_accounts(accounts_file: AccountsFile, profile: str) -> None:
             "order": a.order,
             "currency": a.currency,
             "description": a.description,
+            **({"source_account_id": a.source_account_id} if a.source_account_id else {}),
         }
         for a in accounts_file.accounts
     ]
@@ -98,6 +99,17 @@ def load_all_account_transactions(profile: str) -> list[TransactionRecord]:
 
     all_txs.sort(key=lambda t: t.date)
     return all_txs
+
+
+def find_account_by_source_id(profile: str, source_account_id: str) -> "Account | None":
+    """Return the account whose source_account_id matches, or None."""
+    from .models import Account  # already imported at module level but kept explicit
+
+    accts = load_accounts(profile)
+    for a in accts.accounts:
+        if a.source_account_id == source_account_id:
+            return a
+    return None
 
 
 def delete_account(profile: str, account_id: str) -> bool:

@@ -19,7 +19,7 @@ from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -53,12 +53,14 @@ from ..profile_manager import (
 )
 from ..accounts_manager import (
     delete_account,
+    find_account_by_source_id,
     get_account_transactions_path,
     has_account_transactions,
     load_accounts,
     load_all_account_transactions,
     save_accounts,
 )
+from ..csv_importer import preview_import, parse_csv, group_rows_by_account, _parse_trade_row, _generate_external_id
 from ..transactions_loader import load_all_profile_transactions, load_transactions, save_transactions
 
 load_dotenv()
@@ -1002,9 +1004,143 @@ async def reorder_accounts_endpoint(
     return {"status": "reordered", "accounts": [a.model_dump() for a in accts.accounts]}
 
 
+# ── CSV Import endpoints ──────────────────────────────────────────────────────
+
+
+@app.post("/api/import/preview")
+async def import_preview_endpoint(
+    file: UploadFile = File(...),
+    profile: str | None = None,
+    user: dict = Depends(require_auth),
+):
+    """Parse a CSV export and return a preview of what would be imported.
+
+    Returns account mapping (new vs existing), transaction counts,
+    and duplicate analysis — without writing anything.
+    """
+    if not profile:
+        raise HTTPException(status_code=400, detail="profile parameter is required")
+
+    content = await file.read()
+    accts = load_accounts(profile)
+
+    # Build existing external_id sets per account for deduplication
+    existing_tx_by_account: dict[str, list] = {}
+    for acct in accts.accounts:
+        tx_path = get_account_transactions_path(profile, acct.id)
+        txs_file = load_transactions(path=tx_path)
+        existing_tx_by_account[acct.id] = txs_file.transactions
+
+    try:
+        result = preview_import(content, accts.accounts, existing_tx_by_account)
+    except Exception as e:
+        logger.warning(f"Import preview failed: {e}")
+        raise HTTPException(status_code=422, detail=f"Failed to parse CSV: {e}")
+
+    return result
+
+
+@app.post("/api/import/confirm")
+async def import_confirm_endpoint(
+    file: UploadFile = File(...),
+    profile: str | None = None,
+    user: dict = Depends(require_auth),
+):
+    """Execute the CSV import: create missing accounts and write new transactions.
+
+    Skips duplicate transactions (matched by external_id).
+    Returns counts of accounts created and transactions imported.
+    """
+    if not profile:
+        raise HTTPException(status_code=400, detail="profile parameter is required")
+
+    content = await file.read()
+    try:
+        rows = parse_csv(content)
+        groups = group_rows_by_account(rows)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Failed to parse CSV: {e}")
+
+    accts = load_accounts(profile)
+    src_id_map: dict[str, "Account"] = {
+        a.source_account_id: a for a in accts.accounts if a.source_account_id
+    }
+
+    accounts_created = 0
+    transactions_imported = 0
+    transactions_skipped = 0
+
+    for src_id, grp in groups.items():
+        # Create account if needed
+        matched = src_id_map.get(src_id)
+        if matched is None:
+            # Auto-generate name — use account_type; disambiguate duplicates
+            base_name = grp["account_type"] or src_id
+            existing_names = {a.name for a in accts.accounts}
+            name = base_name
+            suffix = 2
+            while name in existing_names:
+                name = f"{base_name} {suffix}"
+                suffix += 1
+
+            from ..models import Account as _Account
+            new_acct = _Account(
+                name=name,
+                order=len(accts.accounts),
+                currency="USD",
+                description=f"Imported from {src_id}",
+                source_account_id=src_id,
+            )
+            accts.accounts.append(new_acct)
+            save_accounts(accts, profile)
+            matched = new_acct
+            src_id_map[src_id] = matched
+            accounts_created += 1
+            logger.info(f"Created account {name!r} (source: {src_id}) for profile {profile!r}")
+
+        # Load existing transactions and build external_id set
+        tx_path = get_account_transactions_path(profile, matched.id)
+        txs_file = load_transactions(path=tx_path)
+        existing_ext_ids = {t.external_id for t in txs_file.transactions if t.external_id}
+
+        new_txs = []
+        for row in grp["rows"]:
+            tx = _parse_trade_row(row)
+            if tx is None:
+                transactions_skipped += 1
+                continue
+            if tx.external_id and tx.external_id in existing_ext_ids:
+                transactions_skipped += 1
+                continue
+            new_txs.append(tx)
+            if tx.external_id:
+                existing_ext_ids.add(tx.external_id)
+
+        if new_txs:
+            # Merge with existing, sort by date
+            combined = txs_file.transactions + new_txs
+            combined.sort(key=lambda t: t.date)
+            from ..transactions_loader import TransactionsFile as _TxFile
+            txs_file = _TxFile(transactions=combined)
+            save_transactions(txs_file, path=tx_path)
+            transactions_imported += len(new_txs)
+            logger.info(
+                f"Imported {len(new_txs)} transactions into account {matched.name!r} "
+                f"({matched.id}) for profile {profile!r}"
+            )
+
+    return {
+        "status": "ok",
+        "accounts_created": accounts_created,
+        "transactions_imported": transactions_imported,
+        "transactions_skipped": transactions_skipped,
+    }
+
+
 # ── Transaction ledger endpoints ─────────────────────────────────────────────
 
 
+@app.get("/api/transactions")
 @app.get("/api/transactions")
 async def list_transactions_endpoint(
     profile: str | None = None,

@@ -1274,7 +1274,10 @@
                 <div style="font-size:48px;margin-bottom:12px;opacity:0.3">🏦</div>
                 <h3 style="margin-bottom:8px;color:var(--text)">No accounts yet</h3>
                 <p style="color:var(--text-muted);margin-bottom:20px;font-size:14px">Create a brokerage account to start tracking your transactions and P&amp;L.</p>
-                <button class="btn btn-primary" onclick="openAccountModal()">+ Create Account</button>
+                <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+                    <button class="btn btn-primary" onclick="openAccountModal()">+ Create Account</button>
+                    <button class="btn" onclick="openImportModal()">⇪ Import CSV</button>
+                </div>
             </div>
 
             <!-- Account tabs (shown when accounts exist) -->
@@ -1283,6 +1286,7 @@
                 <div style="display:flex;align-items:flex-end;margin-bottom:0">
                     <div class="acct-tab-bar" id="acct-tab-bar"><!-- tabs injected by JS --></div>
                     <button class="acct-tab-add" onclick="openAccountModal()" title="Add account">+</button>
+                    <button class="btn" style="margin-left:8px;padding:5px 11px;font-size:12px;align-self:center;white-space:nowrap" onclick="openImportModal()" title="Import CSV">⇪ Import</button>
                 </div>
 
                 <!-- P&L Summary -->
@@ -1356,6 +1360,63 @@
                         </table>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CSV Import Modal -->
+    <div class="modal-overlay" id="import-modal">
+        <div class="modal-box" style="max-width:680px;width:95vw">
+            <h3>Import from CSV</h3>
+
+            <!-- Step 1: file picker -->
+            <div id="import-step-pick">
+                <p style="color:var(--text-muted);font-size:13px;margin-bottom:16px">
+                    Upload a brokerage activity export (Wealthsimple format). Only <strong>Trade</strong> rows are imported.
+                    Duplicate transactions are automatically skipped.
+                </p>
+                <label style="display:block;border:2px dashed var(--border);border-radius:8px;padding:32px;text-align:center;cursor:pointer;transition:border-color 0.2s" id="import-drop-zone">
+                    <input type="file" id="import-file-input" accept=".csv,text/csv" style="display:none" onchange="onImportFileChosen(this)">
+                    <div style="font-size:32px;margin-bottom:8px;opacity:0.4">📂</div>
+                    <div style="color:var(--text-muted);font-size:13px">Click to choose a CSV file, or drag and drop</div>
+                    <div id="import-file-name" style="margin-top:8px;font-size:12px;color:var(--accent)"></div>
+                </label>
+                <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+                    <button class="btn" onclick="closeImportModal()">Cancel</button>
+                    <button class="btn btn-primary" id="import-preview-btn" onclick="runImportPreview()" disabled>Preview</button>
+                </div>
+            </div>
+
+            <!-- Step 2: preview -->
+            <div id="import-step-preview" style="display:none">
+                <div id="import-preview-summary" style="margin-bottom:16px"></div>
+                <div style="max-height:360px;overflow-y:auto;border:1px solid var(--border);border-radius:6px">
+                    <table class="ledger-table" id="import-preview-table">
+                        <thead>
+                            <tr>
+                                <th>Source Account</th>
+                                <th>Type</th>
+                                <th>Maps to</th>
+                                <th style="text-align:right">New</th>
+                                <th style="text-align:right">Dupes</th>
+                                <th style="text-align:right">Skipped</th>
+                            </tr>
+                        </thead>
+                        <tbody id="import-preview-body"></tbody>
+                    </table>
+                </div>
+                <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap">
+                    <button class="btn" onclick="closeImportModal()">Cancel</button>
+                    <button class="btn" onclick="importGoBack()">← Back</button>
+                    <button class="btn btn-primary" id="import-confirm-btn" onclick="runImportConfirm()">Import</button>
+                </div>
+            </div>
+
+            <!-- Step 3: done -->
+            <div id="import-step-done" style="display:none;text-align:center;padding:24px 0">
+                <div style="font-size:40px;margin-bottom:12px">✅</div>
+                <div id="import-done-msg" style="color:var(--text);margin-bottom:20px"></div>
+                <button class="btn btn-primary" onclick="closeImportModal()">Done</button>
             </div>
         </div>
     </div>
@@ -3033,6 +3094,142 @@
 
         function escHtml(str) {
             return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        }
+
+        // ── CSV Import ──────────────────────────────────────────────────
+
+        let _importFile = null;
+        let _importPreviewData = null;
+
+        function openImportModal() {
+            _importFile = null;
+            _importPreviewData = null;
+            document.getElementById('import-file-name').textContent = '';
+            document.getElementById('import-preview-btn').disabled = true;
+            document.getElementById('import-file-input').value = '';
+            document.getElementById('import-step-pick').style.display = 'block';
+            document.getElementById('import-step-preview').style.display = 'none';
+            document.getElementById('import-step-done').style.display = 'none';
+            document.getElementById('import-modal').classList.add('open');
+            // Wire drag-and-drop on drop zone
+            const dz = document.getElementById('import-drop-zone');
+            dz.addEventListener('dragover', e => { e.preventDefault(); dz.style.borderColor = 'var(--accent)'; });
+            dz.addEventListener('dragleave', () => { dz.style.borderColor = 'var(--border)'; });
+            dz.addEventListener('drop', e => {
+                e.preventDefault();
+                dz.style.borderColor = 'var(--border)';
+                const f = e.dataTransfer.files[0];
+                if (f) setImportFile(f);
+            });
+        }
+
+        function closeImportModal() {
+            document.getElementById('import-modal').classList.remove('open');
+            _importFile = null;
+            _importPreviewData = null;
+            // Reload accounts in case something was imported
+            loadAccounts();
+        }
+
+        function onImportFileChosen(input) {
+            if (input.files[0]) setImportFile(input.files[0]);
+        }
+
+        function setImportFile(f) {
+            _importFile = f;
+            document.getElementById('import-file-name').textContent = f.name;
+            document.getElementById('import-preview-btn').disabled = false;
+        }
+
+        async function runImportPreview() {
+            if (!_importFile) return;
+            const btn = document.getElementById('import-preview-btn');
+            btn.disabled = true;
+            btn.textContent = 'Analysing…';
+            try {
+                const fd = new FormData();
+                fd.append('file', _importFile);
+                const res = await apiFetch(apiUrl('/api/import/preview'), { method: 'POST', body: fd });
+                if (!res.ok) {
+                    const err = await res.json();
+                    showToast(err.detail || 'Preview failed', 'error');
+                    return;
+                }
+                _importPreviewData = await res.json();
+                renderImportPreview(_importPreviewData);
+                document.getElementById('import-step-pick').style.display = 'none';
+                document.getElementById('import-step-preview').style.display = 'block';
+            } catch (e) {
+                showToast('Network error during preview', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Preview';
+            }
+        }
+
+        function renderImportPreview(data) {
+            const summary = document.getElementById('import-preview-summary');
+            const body = document.getElementById('import-preview-body');
+            const confirmBtn = document.getElementById('import-confirm-btn');
+
+            summary.innerHTML = `
+                <div class="pnl-cards" style="margin-bottom:0">
+                    <div class="pnl-card"><div class="pnl-label">Total rows</div><div class="pnl-value pnl-neutral">${data.total_rows}</div></div>
+                    <div class="pnl-card"><div class="pnl-label">New trades</div><div class="pnl-value ${data.total_new > 0 ? 'pnl-positive' : 'pnl-neutral'}">${data.total_new}</div></div>
+                    <div class="pnl-card"><div class="pnl-label">Duplicates</div><div class="pnl-value pnl-neutral">${data.total_duplicates}</div></div>
+                    <div class="pnl-card"><div class="pnl-label">Skipped</div><div class="pnl-value pnl-neutral">${data.total_skipped}</div></div>
+                </div>`;
+
+            body.innerHTML = data.account_previews.map(ap => `
+                <tr>
+                    <td style="font-family:'SF Mono',monospace;font-size:11px">${escHtml(ap.source_account_id)}</td>
+                    <td>${escHtml(ap.account_type)}</td>
+                    <td>${ap.to_create
+                        ? '<span style="color:var(--accent);font-size:11px">✦ New account</span>'
+                        : `<span style="font-size:12px">${escHtml(ap.matched_account_name || '')}</span>`}</td>
+                    <td style="text-align:right;color:var(--green)">${ap.new_count}</td>
+                    <td style="text-align:right;color:var(--text-muted)">${ap.duplicate_count}</td>
+                    <td style="text-align:right;color:var(--text-muted)">${ap.skipped_count}</td>
+                </tr>`).join('');
+
+            confirmBtn.disabled = data.total_new === 0;
+            confirmBtn.textContent = data.total_new > 0 ? `Import ${data.total_new} transactions` : 'Nothing to import';
+        }
+
+        function importGoBack() {
+            document.getElementById('import-step-pick').style.display = 'block';
+            document.getElementById('import-step-preview').style.display = 'none';
+        }
+
+        async function runImportConfirm() {
+            if (!_importFile) return;
+            const btn = document.getElementById('import-confirm-btn');
+            btn.disabled = true;
+            btn.textContent = 'Importing…';
+            try {
+                const fd = new FormData();
+                fd.append('file', _importFile);
+                const res = await apiFetch(apiUrl('/api/import/confirm'), { method: 'POST', body: fd });
+                if (!res.ok) {
+                    const err = await res.json();
+                    showToast(err.detail || 'Import failed', 'error');
+                    btn.disabled = false;
+                    btn.textContent = 'Import';
+                    return;
+                }
+                const data = await res.json();
+                document.getElementById('import-step-preview').style.display = 'none';
+                document.getElementById('import-step-done').style.display = 'block';
+                document.getElementById('import-done-msg').innerHTML = `
+                    <strong>${data.transactions_imported}</strong> transaction${data.transactions_imported !== 1 ? 's' : ''} imported
+                    across <strong>${data.accounts_created > 0 ? data.accounts_created : 'existing'}</strong> account${data.accounts_created !== 1 ? 's' : ''}
+                    ${data.accounts_created > 0 ? '(new)' : ''}.
+                    ${data.transactions_skipped > 0 ? `<br><span style="color:var(--text-muted);font-size:13px">${data.transactions_skipped} duplicates/skipped.</span>` : ''}`;
+            } catch (e) {
+                showToast('Network error during import', 'error');
+                btn.disabled = false;
+                btn.textContent = 'Import';
+            }
         }
 
         // ── Init ────────────────────────────────────────────────────────

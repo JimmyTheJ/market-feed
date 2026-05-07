@@ -247,6 +247,7 @@ class TransactionRecord(BaseModel):
     expiration: Optional[str] = None  # ISO date string e.g. "2026-06-20"
     lot_id: Optional[str] = None  # for specific-lot sells, references the buy tx id
     notes: str = ""
+    external_id: Optional[str] = None  # dedup key from CSV import (hash of source row)
 
     @field_validator("ticker")
     @classmethod
@@ -380,6 +381,7 @@ class Account(BaseModel):
     order: int = 0
     currency: str = "USD"
     description: str = ""
+    source_account_id: Optional[str] = None  # external brokerage account ID (e.g. Wealthsimple)
 
     @field_validator("name")
     @classmethod
