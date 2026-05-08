@@ -1387,25 +1387,30 @@
                 </div>
             </div>
 
-            <!-- Step 2: preview -->
+            <!-- Step 2: preview + account mapping -->
             <div id="import-step-preview" style="display:none">
-                <div id="import-preview-summary" style="margin-bottom:16px"></div>
-                <div style="max-height:360px;overflow-y:auto;border:1px solid var(--border);border-radius:6px">
+                <p style="color:var(--text-muted);font-size:12px;margin-bottom:12px">
+                    Choose where each source account's transactions will be stored.
+                    Select the <strong>same destination</strong> for multiple sources to <strong>merge</strong> them into one account.
+                </p>
+                <div id="import-preview-summary" style="margin-bottom:12px"></div>
+                <div style="max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:6px">
                     <table class="ledger-table" id="import-preview-table">
                         <thead>
                             <tr>
                                 <th>Source Account</th>
                                 <th>Type</th>
-                                <th>Maps to</th>
-                                <th style="text-align:right">New</th>
-                                <th style="text-align:right">Dupes</th>
-                                <th style="text-align:right">Skipped</th>
+                                <th style="text-align:right">Rows</th>
+                                <th>Import into</th>
                             </tr>
                         </thead>
                         <tbody id="import-preview-body"></tbody>
                     </table>
                 </div>
-                <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap">
+                <div style="margin-top:8px">
+                    <button class="btn" style="font-size:12px;padding:4px 10px" onclick="addImportDestination()">+ Add destination</button>
+                </div>
+                <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;flex-wrap:wrap">
                     <button class="btn" onclick="closeImportModal()">Cancel</button>
                     <button class="btn" onclick="importGoBack()">← Back</button>
                     <button class="btn btn-primary" id="import-confirm-btn" onclick="runImportConfirm()">Import</button>
@@ -3100,10 +3105,14 @@
 
         let _importFile = null;
         let _importPreviewData = null;
+        let _importMapping = {};        // src_id → "existing:ACCOUNT_ID" | "new:LABEL"
+        let _importCustomLabels = [];   // user-added destination names
 
         function openImportModal() {
             _importFile = null;
             _importPreviewData = null;
+            _importMapping = {};
+            _importCustomLabels = [];
             document.getElementById('import-file-name').textContent = '';
             document.getElementById('import-preview-btn').disabled = true;
             document.getElementById('import-file-input').value = '';
@@ -3127,6 +3136,8 @@
             document.getElementById('import-modal').classList.remove('open');
             _importFile = null;
             _importPreviewData = null;
+            _importMapping = {};
+            _importCustomLabels = [];
             // Reload accounts in case something was imported
             loadAccounts();
         }
@@ -3167,10 +3178,61 @@
             }
         }
 
+        function _importDefaultValue(ap) {
+            if (ap.matched_account_id) return 'existing:' + ap.matched_account_id;
+            return 'new:' + (ap.account_type || ap.source_account_id);
+        }
+
+        function _buildMappingSelectHtml(srcId) {
+            const val = _importMapping[srcId] || '';
+            let html = '';
+            const accounts = currentAccounts || [];
+            if (accounts.length > 0) {
+                html += '<optgroup label="Existing Accounts">';
+                for (const a of accounts) {
+                    const v = 'existing:' + a.id;
+                    html += `<option value="${escHtml(v)}"${val === v ? ' selected' : ''}>${escHtml(a.name)}</option>`;
+                }
+                html += '</optgroup>';
+            }
+            // New labels: unique account_types from CSV + user-added custom labels
+            const typesFromCsv = [...new Set(
+                (_importPreviewData?.account_previews || []).map(ap => ap.account_type).filter(Boolean)
+            )];
+            const allLabels = [...new Set([...typesFromCsv, ..._importCustomLabels])];
+            html += '<optgroup label="Create New">';
+            for (const label of allLabels) {
+                const v = 'new:' + label;
+                html += `<option value="${escHtml(v)}"${val === v ? ' selected' : ''}>✦ ${escHtml(label)}</option>`;
+            }
+            html += '</optgroup>';
+            return html;
+        }
+
+        function addImportDestination() {
+            const name = prompt('New destination account name:');
+            if (!name || !name.trim()) return;
+            const label = name.trim();
+            if (!_importCustomLabels.includes(label)) _importCustomLabels.push(label);
+            // Re-render all mapping selects, preserving current selection
+            document.querySelectorAll('#import-preview-body .mapping-select').forEach(sel => {
+                const srcId = sel.dataset.srcId;
+                const current = _importMapping[srcId];
+                sel.innerHTML = _buildMappingSelectHtml(srcId);
+                if (current) sel.value = current;
+            });
+        }
+
         function renderImportPreview(data) {
             const summary = document.getElementById('import-preview-summary');
             const body = document.getElementById('import-preview-body');
             const confirmBtn = document.getElementById('import-confirm-btn');
+
+            // Initialise default mapping (same account_type → same new bucket by default)
+            _importMapping = {};
+            for (const ap of data.account_previews) {
+                _importMapping[ap.source_account_id] = _importDefaultValue(ap);
+            }
 
             summary.innerHTML = `
                 <div class="pnl-cards" style="margin-bottom:0">
@@ -3180,17 +3242,28 @@
                     <div class="pnl-card"><div class="pnl-label">Skipped</div><div class="pnl-value pnl-neutral">${data.total_skipped}</div></div>
                 </div>`;
 
-            body.innerHTML = data.account_previews.map(ap => `
-                <tr>
-                    <td style="font-family:'SF Mono',monospace;font-size:11px">${escHtml(ap.source_account_id)}</td>
+            body.innerHTML = data.account_previews.map(ap => {
+                const totalRows = ap.new_count + ap.duplicate_count + ap.skipped_count;
+                const srcIdEsc = escHtml(ap.source_account_id);
+                return `<tr>
+                    <td style="font-family:'SF Mono',monospace;font-size:11px">${srcIdEsc}</td>
                     <td>${escHtml(ap.account_type)}</td>
-                    <td>${ap.to_create
-                        ? '<span style="color:var(--accent);font-size:11px">✦ New account</span>'
-                        : `<span style="font-size:12px">${escHtml(ap.matched_account_name || '')}</span>`}</td>
-                    <td style="text-align:right;color:var(--green)">${ap.new_count}</td>
-                    <td style="text-align:right;color:var(--text-muted)">${ap.duplicate_count}</td>
-                    <td style="text-align:right;color:var(--text-muted)">${ap.skipped_count}</td>
-                </tr>`).join('');
+                    <td style="text-align:right">${totalRows}</td>
+                    <td>
+                        <select class="mapping-select" data-src-id="${srcIdEsc}"
+                                style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px;width:100%;max-width:200px">
+                            ${_buildMappingSelectHtml(ap.source_account_id)}
+                        </select>
+                    </td>
+                </tr>`;
+            }).join('');
+
+            // Wire change events after rendering
+            body.querySelectorAll('.mapping-select').forEach(sel => {
+                sel.addEventListener('change', () => {
+                    _importMapping[sel.dataset.srcId] = sel.value;
+                });
+            });
 
             confirmBtn.disabled = data.total_new === 0;
             confirmBtn.textContent = data.total_new > 0 ? `Import ${data.total_new} transactions` : 'Nothing to import';
@@ -3207,8 +3280,18 @@
             btn.disabled = true;
             btn.textContent = 'Importing…';
             try {
+                // Build explicit mapping from current select state
+                const mapping = {};
+                for (const [srcId, val] of Object.entries(_importMapping)) {
+                    if (val.startsWith('existing:')) {
+                        mapping[srcId] = { target: 'existing', account_id: val.slice(9) };
+                    } else if (val.startsWith('new:')) {
+                        mapping[srcId] = { target: 'new', name: val.slice(4) };
+                    }
+                }
                 const fd = new FormData();
                 fd.append('file', _importFile);
+                fd.append('mapping', JSON.stringify(mapping));
                 const res = await apiFetch(apiUrl('/api/import/confirm'), { method: 'POST', body: fd });
                 if (!res.ok) {
                     const err = await res.json();

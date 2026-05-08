@@ -19,7 +19,7 @@ from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -1044,13 +1044,28 @@ async def import_preview_endpoint(
 async def import_confirm_endpoint(
     file: UploadFile = File(...),
     profile: str | None = None,
+    mapping: Optional[str] = Form(None),
     user: dict = Depends(require_auth),
 ):
-    """Execute the CSV import: create missing accounts and write new transactions.
+    """Execute the CSV import: create/merge accounts and write new transactions.
+
+    Accepts an optional ``mapping`` form field (JSON) that controls which internal
+    account each CSV source account maps to::
+
+        {
+          "<source_account_id>": {"target": "existing", "account_id": "<id>"},
+          "<source_account_id>": {"target": "new", "name": "TFSA"}
+        }
+
+    Multiple source accounts with the same ``name`` under ``target=new`` are
+    **merged** into a single new account.  If ``mapping`` is omitted the
+    endpoint falls back to automatic mapping (match by source_account_id,
+    create one account per unique account_type).
 
     Skips duplicate transactions (matched by external_id).
-    Returns counts of accounts created and transactions imported.
     """
+    import json as _json
+
     if not profile:
         raise HTTPException(status_code=400, detail="profile parameter is required")
 
@@ -1061,72 +1076,137 @@ async def import_confirm_endpoint(
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Failed to parse CSV: {e}")
 
+    explicit_mapping: dict[str, dict] | None = None
+    if mapping:
+        try:
+            explicit_mapping = _json.loads(mapping)
+        except Exception:
+            raise HTTPException(status_code=422, detail="Invalid mapping JSON")
+
     accts = load_accounts(profile)
-    src_id_map: dict[str, "Account"] = {
+    src_id_to_existing: dict[str, "Account"] = {
         a.source_account_id: a for a in accts.accounts if a.source_account_id
     }
 
+    # ── Phase 1: determine which new account labels to create ─────────────
+    # Use an ordered dict to preserve insertion order (Python 3.7+).
+    labels_to_create: dict[str, None] = {}
+    for src_id, grp in groups.items():
+        if explicit_mapping and src_id in explicit_mapping:
+            entry = explicit_mapping[src_id]
+            if entry.get("target") == "new":
+                label = entry.get("name") or grp["account_type"] or src_id
+                labels_to_create.setdefault(label, None)
+        else:
+            if src_id not in src_id_to_existing:
+                label = grp["account_type"] or src_id
+                labels_to_create.setdefault(label, None)
+
+    # ── Phase 2: create one account per unique label ───────────────────────
+    existing_names = {a.name for a in accts.accounts}
+    new_label_map: dict[str, "Account"] = {}
     accounts_created = 0
+
+    from ..models import Account as _Account
+
+    for label in labels_to_create:
+        name = label
+        suffix = 2
+        while name in existing_names:
+            name = f"{label} {suffix}"
+            suffix += 1
+        new_acct = _Account(
+            name=name,
+            order=len(accts.accounts),
+            currency="USD",
+            description="Imported from CSV",
+        )
+        accts.accounts.append(new_acct)
+        new_label_map[label] = new_acct
+        existing_names.add(name)
+        accounts_created += 1
+        logger.info(f"Created account {name!r} for profile {profile!r}")
+
+    if accounts_created:
+        save_accounts(accts, profile)
+
+    # ── Phase 3: resolve each source account to an internal account ────────
+    acct_by_id = {a.id: a for a in accts.accounts}
+    resolved: dict[str, Optional["Account"]] = {}
+
+    for src_id, grp in groups.items():
+        if explicit_mapping and src_id in explicit_mapping:
+            entry = explicit_mapping[src_id]
+            target = entry.get("target")
+            if target == "existing":
+                resolved[src_id] = acct_by_id.get(entry.get("account_id", ""))
+            elif target == "new":
+                label = entry.get("name") or grp["account_type"] or src_id
+                resolved[src_id] = new_label_map.get(label)
+            else:
+                resolved[src_id] = None
+        else:
+            matched = src_id_to_existing.get(src_id)
+            if matched:
+                resolved[src_id] = matched
+            else:
+                label = grp["account_type"] or src_id
+                resolved[src_id] = new_label_map.get(label)
+
+    # ── Phase 4: import transactions, deduplicating by external_id ─────────
+    # Load existing transaction files once and share ext_id sets across
+    # source accounts that map to the same destination (handles within-import
+    # dedup when merging multiple source accounts).
+    from ..transactions_loader import TransactionsFile as _TxFile
+
+    tx_files: dict[str, "_TxFile"] = {}
+    ext_id_sets: dict[str, set[str]] = {}
+    new_txs_by_acct: dict[str, list] = {}
+
+    for acct in accts.accounts:
+        tx_path = get_account_transactions_path(profile, acct.id)
+        txs_file = load_transactions(path=tx_path)
+        tx_files[acct.id] = txs_file
+        ext_id_sets[acct.id] = {t.external_id for t in txs_file.transactions if t.external_id}
+
     transactions_imported = 0
     transactions_skipped = 0
 
     for src_id, grp in groups.items():
-        # Create account if needed
-        matched = src_id_map.get(src_id)
+        matched = resolved.get(src_id)
         if matched is None:
-            # Auto-generate name — use account_type; disambiguate duplicates
-            base_name = grp["account_type"] or src_id
-            existing_names = {a.name for a in accts.accounts}
-            name = base_name
-            suffix = 2
-            while name in existing_names:
-                name = f"{base_name} {suffix}"
-                suffix += 1
+            transactions_skipped += len(grp["rows"])
+            continue
 
-            from ..models import Account as _Account
-            new_acct = _Account(
-                name=name,
-                order=len(accts.accounts),
-                currency="USD",
-                description=f"Imported from {src_id}",
-                source_account_id=src_id,
-            )
-            accts.accounts.append(new_acct)
-            save_accounts(accts, profile)
-            matched = new_acct
-            src_id_map[src_id] = matched
-            accounts_created += 1
-            logger.info(f"Created account {name!r} (source: {src_id}) for profile {profile!r}")
+        ext_ids = ext_id_sets.setdefault(matched.id, set())
+        bucket = new_txs_by_acct.setdefault(matched.id, [])
 
-        # Load existing transactions and build external_id set
-        tx_path = get_account_transactions_path(profile, matched.id)
-        txs_file = load_transactions(path=tx_path)
-        existing_ext_ids = {t.external_id for t in txs_file.transactions if t.external_id}
-
-        new_txs = []
         for row in grp["rows"]:
             tx = _parse_trade_row(row)
             if tx is None:
                 transactions_skipped += 1
                 continue
-            if tx.external_id and tx.external_id in existing_ext_ids:
+            if tx.external_id and tx.external_id in ext_ids:
                 transactions_skipped += 1
                 continue
-            new_txs.append(tx)
+            bucket.append(tx)
             if tx.external_id:
-                existing_ext_ids.add(tx.external_id)
+                ext_ids.add(tx.external_id)
 
-        if new_txs:
-            # Merge with existing, sort by date
-            combined = txs_file.transactions + new_txs
-            combined.sort(key=lambda t: t.date)
-            from ..transactions_loader import TransactionsFile as _TxFile
-            txs_file = _TxFile(transactions=combined)
-            save_transactions(txs_file, path=tx_path)
-            transactions_imported += len(new_txs)
+    for acct_id, new_txs in new_txs_by_acct.items():
+        if not new_txs:
+            continue
+        txs_file = tx_files.get(acct_id)
+        combined = (txs_file.transactions if txs_file else []) + new_txs
+        combined.sort(key=lambda t: t.date)
+        tx_path = get_account_transactions_path(profile, acct_id)
+        save_transactions(_TxFile(transactions=combined), path=tx_path)
+        transactions_imported += len(new_txs)
+        acct = acct_by_id.get(acct_id)
+        if acct:
             logger.info(
-                f"Imported {len(new_txs)} transactions into account {matched.name!r} "
-                f"({matched.id}) for profile {profile!r}"
+                f"Imported {len(new_txs)} transactions into {acct.name!r} "
+                f"for profile {profile!r}"
             )
 
     return {
