@@ -71,17 +71,22 @@ def _parse_occ_symbol(symbol: str) -> Optional[dict]:
 def _generate_external_id(row: dict) -> str:
     """Stable hash of the key fields in a CSV row for deduplication."""
     key = "|".join([
-        row.get("transaction_date", ""),
-        row.get("account_id", ""),
-        row.get("activity_sub_type", ""),
-        row.get("symbol", ""),
-        row.get("quantity", ""),
-        row.get("unit_price", ""),
+        _safe_str(row.get("transaction_date")),
+        _safe_str(row.get("account_id")),
+        _safe_str(row.get("activity_sub_type")),
+        _safe_str(row.get("symbol")),
+        _safe_str(row.get("quantity")),
+        _safe_str(row.get("unit_price")),
     ])
     return hashlib.sha256(key.encode()).hexdigest()[:20]
 
 
-def _safe_float(val: str, default: float = 0.0) -> float:
+def _safe_str(val) -> str:
+    """Return a stripped string, safely handling None values from DictReader."""
+    return (val or "").strip()
+
+
+def _safe_float(val, default: float = 0.0) -> float:
     try:
         return float(val.strip()) if val and val.strip() else default
     except (ValueError, AttributeError):
@@ -93,14 +98,14 @@ def _parse_trade_row(row: dict) -> Optional[TransactionRecord]:
 
     Returns None if the row is not a Trade BUY/SELL or lacks required fields.
     """
-    if row.get("activity_type", "").strip() not in _IMPORTABLE_ACTIVITY_TYPES:
+    if _safe_str(row.get("activity_type")) not in _IMPORTABLE_ACTIVITY_TYPES:
         return None
-    sub_type = row.get("activity_sub_type", "").strip().upper()
+    sub_type = _safe_str(row.get("activity_sub_type")).upper()
     if sub_type not in _IMPORTABLE_SUB_TYPES:
         return None
 
-    tx_date_str = row.get("transaction_date", "").strip()
-    symbol_raw = row.get("symbol", "").strip()
+    tx_date_str = _safe_str(row.get("transaction_date"))
+    symbol_raw = _safe_str(row.get("symbol"))
     if not tx_date_str or not symbol_raw:
         return None
 
@@ -111,12 +116,12 @@ def _parse_trade_row(row: dict) -> Optional[TransactionRecord]:
         return None
 
     action = "buy" if sub_type == "BUY" else "sell"
-    quantity = abs(_safe_float(row.get("quantity", "")))
-    price = abs(_safe_float(row.get("unit_price", "")))
-    commission = abs(_safe_float(row.get("commission", "")))
-    currency = row.get("currency", "USD").strip() or "USD"
-    notes = row.get("name", "").strip()
-    direction = row.get("direction", "").strip().upper()  # LONG or SHORT
+    quantity = abs(_safe_float(row.get("quantity")))
+    price = abs(_safe_float(row.get("unit_price")))
+    commission = abs(_safe_float(row.get("commission")))
+    currency = _safe_str(row.get("currency")) or "USD"
+    notes = _safe_str(row.get("name"))
+    direction = _safe_str(row.get("direction")).upper()  # LONG or SHORT
     external_id = _generate_external_id(row)
 
     if quantity <= 0:
@@ -175,13 +180,13 @@ def group_rows_by_account(rows: list[dict]) -> dict[str, dict]:
     """Group CSV rows by account_id, returning metadata per account."""
     groups: dict[str, dict] = {}
     for row in rows:
-        src_id = row.get("account_id", "").strip()
+        src_id = _safe_str(row.get("account_id"))
         if not src_id:
             continue
         if src_id not in groups:
             groups[src_id] = {
                 "source_account_id": src_id,
-                "account_type": row.get("account_type", "").strip(),
+                "account_type": _safe_str(row.get("account_type")),
                 "rows": [],
             }
         groups[src_id]["rows"].append(row)
