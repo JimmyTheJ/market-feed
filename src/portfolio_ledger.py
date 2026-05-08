@@ -107,7 +107,9 @@ def _compute_fifo(
             lots_by_key[key] = deque()
 
         if tx.action == "buy":
-            cost_per_unit = tx.price + (tx.commission / tx.quantity if tx.quantity else 0.0)
+            mult = _multiplier(tx.position_type)
+            comm_per_share = tx.commission / (tx.quantity * mult) if tx.quantity else 0.0
+            cost_per_unit = tx.price + comm_per_share
             lots_by_key[key].append(
                 _Lot(
                     transaction_id=tx.id,
@@ -126,7 +128,7 @@ def _compute_fifo(
     return lots_by_key, realized_by_key
 
 
-# ── Average cost matching ─────────────────────────────────────────────────────
+# ── Average cost matching─────────────────────────────────────────────────────
 
 
 def _compute_average_cost(
@@ -196,7 +198,9 @@ def _compute_specific_lot(
             lots_by_key[key] = deque()
 
         if tx.action == "buy":
-            cost_per_unit = tx.price + (tx.commission / tx.quantity if tx.quantity else 0.0)
+            mult = _multiplier(tx.position_type)
+            comm_per_share = tx.commission / (tx.quantity * mult) if tx.quantity else 0.0
+            cost_per_unit = tx.price + comm_per_share
             lot = _Lot(
                 transaction_id=tx.id,
                 date=tx.date,
@@ -364,13 +368,16 @@ def compute_pnl(
             avg_cost = 0.0
             total_cost_native = 0.0
 
-        # Current value and unrealized P&L
+        # Current value and unrealized P&L.
+        # For options we only have the underlying stock price, not the option
+        # premium — using it would yield the notional shares value rather than
+        # the option's market value.  Mark as unavailable instead.
         current_price = prices.get(ticker)
         current_value_native: Optional[float] = None
         unrealized_native: Optional[float] = None
         unrealized_pct: Optional[float] = None
 
-        if current_price is not None and open_qty > 1e-9:
+        if current_price is not None and open_qty > 1e-9 and pos_type != "option":
             current_value_native = current_price * open_qty * mult
             unrealized_native = current_value_native - total_cost_native
             if total_cost_native != 0:
