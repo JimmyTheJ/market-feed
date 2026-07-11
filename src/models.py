@@ -395,3 +395,51 @@ class AccountsFile(BaseModel):
     """The accounts.yaml structure for a profile."""
 
     accounts: list[Account] = Field(default_factory=list)
+
+
+# ── Ledger anomaly models ─────────────────────────────────────────────────────
+
+
+class Anomaly(BaseModel):
+    """A detected inconsistency in the transaction ledger."""
+
+    severity: str  # "info" | "warning" | "error"
+    code: str  # e.g. "OVERSELL", "EXPIRED_OPTION_OPEN"
+    message: str
+    instrument_key: Optional[str] = None
+    ticker: Optional[str] = None
+    transaction_id: Optional[str] = None
+    account_id: Optional[str] = None
+    account_name: Optional[str] = None
+    # Optional structured details for UI / auto-fix
+    details: dict = Field(default_factory=dict)
+
+
+class AnomalyScanResult(BaseModel):
+    """Result of scanning a profile or account for ledger anomalies."""
+
+    scanned_at: datetime
+    profile: str
+    account_id: Optional[str] = None  # None = all accounts aggregated
+    scope: str  # "account" | "profile"
+    anomaly_count: int = 0
+    error_count: int = 0
+    warning_count: int = 0
+    info_count: int = 0
+    anomalies: list[Anomaly] = Field(default_factory=list)
+
+
+class SuggestedFix(BaseModel):
+    """A suggested ledger correction (e.g. close an expired option at $0)."""
+
+    code: str  # e.g. "EXPIRED_OPTION_CLOSE"
+    account_id: Optional[str] = None
+    account_name: Optional[str] = None
+    transaction: TransactionRecord
+    message: str = ""
+
+
+class AnomalyScanResultWithFixes(AnomalyScanResult):
+    """Scan result including auto-fix suggestions."""
+
+    suggested_fixes: list[SuggestedFix] = Field(default_factory=list)

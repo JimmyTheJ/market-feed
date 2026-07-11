@@ -945,6 +945,39 @@
         .ledger-action-buy { color: var(--green); font-weight: 600; }
         .ledger-action-sell { color: var(--red); font-weight: 600; }
 
+        /* ── Anomaly panel ───────────────────────────────────────────── */
+        .anomaly-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 18px;
+            height: 18px;
+            padding: 0 5px;
+            border-radius: 9px;
+            font-size: 10px;
+            font-weight: 700;
+            margin-left: 4px;
+        }
+        .anomaly-badge.error { background: var(--red); color: #fff; }
+        .anomaly-badge.warning { background: #d97706; color: #fff; }
+        .anomaly-item {
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+        .anomaly-item.error { border-left: 3px solid var(--red); }
+        .anomaly-item.warning { border-left: 3px solid #d97706; }
+        .anomaly-item.info { border-left: 3px solid var(--accent); }
+        .anomaly-code {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+
         /* ── Transaction modal ───────────────────────────────────────── */
         .modal-overlay {
             display: none;
@@ -1287,6 +1320,19 @@
                     <div class="acct-tab-bar" id="acct-tab-bar"><!-- tabs injected by JS --></div>
                     <button class="acct-tab-add" onclick="openAccountModal()" title="Add account">+</button>
                     <button class="btn" style="margin-left:8px;padding:5px 11px;font-size:12px;align-self:center;white-space:nowrap" onclick="openImportModal()" title="Import CSV">⇪ Import</button>
+                    <button class="btn" id="scan-anomalies-btn" style="margin-left:4px;padding:5px 11px;font-size:12px;align-self:center;white-space:nowrap" onclick="scanAnomalies()" title="Scan for ledger anomalies">⚠ Scan</button>
+                </div>
+
+                <!-- Anomalies panel (shown after scan) -->
+                <div class="card" id="anomalies-card" style="display:none;border-top-left-radius:0;margin-top:0">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                        <h2 style="margin-bottom:0">Ledger Anomalies <span id="anomaly-count-badge"></span></h2>
+                        <div style="display:flex;gap:8px">
+                            <button class="btn" id="apply-expired-btn" style="padding:5px 10px;font-size:12px;display:none" onclick="applyExpiredFixes()">Close expired options</button>
+                            <button class="btn" style="padding:5px 10px;font-size:12px" onclick="document.getElementById('anomalies-card').style.display='none'">✕</button>
+                        </div>
+                    </div>
+                    <div id="anomalies-list"></div>
                 </div>
 
                 <!-- P&L Summary -->
@@ -2955,6 +3001,102 @@
             renderAccountTabs();
             loadTransactions();
             loadPnl();
+            // Hide anomalies panel when switching accounts (user can re-scan)
+            const card = document.getElementById('anomalies-card');
+            if (card) card.style.display = 'none';
+        }
+
+        // ── Ledger anomaly scanning ─────────────────────────────────────
+
+        let lastAnomalyScan = null;
+
+        async function scanAnomalies() {
+            if (!currentProfile) return;
+            const btn = document.getElementById('scan-anomalies-btn');
+            btn.disabled = true;
+            btn.textContent = 'Scanning…';
+            try {
+                const acctParam = currentAccountId ? `account_id=${encodeURIComponent(currentAccountId)}` : '';
+                const res = await apiFetch(apiUrl('/api/anomalies/scan', acctParam));
+                if (!res.ok) {
+                    const err = await res.json();
+                    showToast(err.detail || 'Scan failed', 'error');
+                    return;
+                }
+                lastAnomalyScan = await res.json();
+                renderAnomalies(lastAnomalyScan);
+            } catch (e) {
+                showToast('Network error during scan', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '⚠ Scan';
+            }
+        }
+
+        function renderAnomalies(scan) {
+            const card = document.getElementById('anomalies-card');
+            const list = document.getElementById('anomalies-list');
+            const badge = document.getElementById('anomaly-count-badge');
+            const applyBtn = document.getElementById('apply-expired-btn');
+
+            card.style.display = 'block';
+
+            if (!scan.anomaly_count) {
+                badge.innerHTML = '';
+                list.innerHTML = '<div style="color:var(--green);font-size:13px">✓ No anomalies detected — ledger looks consistent.</div>';
+                applyBtn.style.display = 'none';
+                return;
+            }
+
+            const errBadge = scan.error_count > 0
+                ? `<span class="anomaly-badge error">${scan.error_count}</span>` : '';
+            const warnBadge = scan.warning_count > 0
+                ? `<span class="anomaly-badge warning">${scan.warning_count}</span>` : '';
+            badge.innerHTML = errBadge + warnBadge;
+
+            const hasExpiredFixes = (scan.suggested_fixes || []).some(f => f.code === 'EXPIRED_OPTION_CLOSE');
+            applyBtn.style.display = hasExpiredFixes ? 'inline-block' : 'none';
+            applyBtn.textContent = `Close ${scan.suggested_fixes.length} expired option(s)`;
+
+            list.innerHTML = scan.anomalies.map(a => {
+                const acctLabel = a.account_name ? `<span style="color:var(--text-muted);font-size:11px">[${escHtml(a.account_name)}] </span>` : '';
+                return `<div class="anomaly-item ${a.severity}">
+                    <div class="anomaly-code">${escHtml(a.code)} · ${a.severity}</div>
+                    ${acctLabel}${escHtml(a.message)}
+                </div>`;
+            }).join('');
+        }
+
+        async function applyExpiredFixes() {
+            if (!currentProfile || !lastAnomalyScan?.suggested_fixes?.length) return;
+            const count = lastAnomalyScan.suggested_fixes.length;
+            if (!confirm(`Add ${count} closing transaction(s) at $0 for expired options?`)) return;
+
+            const applyBtn = document.getElementById('apply-expired-btn');
+            applyBtn.disabled = true;
+            try {
+                const acctParam = currentAccountId ? `account_id=${encodeURIComponent(currentAccountId)}` : '';
+                const res = await apiFetch(apiUrl('/api/anomalies/apply-fixes', acctParam), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fix_codes: ['EXPIRED_OPTION_CLOSE'] }),
+                });
+                if (!res.ok) {
+                    const err = await res.json();
+                    showToast(err.detail || 'Failed to apply fixes', 'error');
+                    return;
+                }
+                const data = await res.json();
+                showToast(`Applied ${data.fixes_applied} fix(es)`);
+                await scanAnomalies();
+                loadTransactions();
+                loadPnl();
+                loadPositions();
+            } catch (e) {
+                showToast('Network error', 'error');
+            } finally {
+                applyBtn.disabled = false;
+            }
         }
 
         function openAccountModal(id) {
@@ -3267,6 +3409,31 @@
 
             confirmBtn.disabled = data.total_new === 0;
             confirmBtn.textContent = data.total_new > 0 ? `Import ${data.total_new} transactions` : 'Nothing to import';
+
+            // Show import anomaly warnings
+            if (data.anomaly_count > 0) {
+                const errCount = (data.anomalies || []).filter(a => a.severity === 'error').length;
+                const warnCount = (data.anomalies || []).filter(a => a.severity === 'warning').length;
+                summary.innerHTML += `
+                    <div style="margin-top:12px;padding:10px 12px;border:1px solid ${errCount > 0 ? 'var(--red)' : '#d97706'};border-radius:6px;background:rgba(255,255,255,0.02)">
+                        <div style="font-weight:600;margin-bottom:6px;color:${errCount > 0 ? 'var(--red)' : '#d97706'}">
+                            ⚠ ${data.anomaly_count} ledger anomal${data.anomaly_count === 1 ? 'y' : 'ies'} detected if imported
+                        </div>
+                        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">
+                            ${errCount > 0 ? errCount + ' error(s)' : ''}${errCount > 0 && warnCount > 0 ? ', ' : ''}${warnCount > 0 ? warnCount + ' warning(s)' : ''}
+                            — review before confirming import.
+                        </div>
+                        <div style="max-height:120px;overflow-y:auto">
+                            ${(data.anomalies || []).slice(0, 5).map(a => `
+                                <div class="anomaly-item ${a.severity}" style="margin-bottom:4px;padding:6px 8px;font-size:12px">
+                                    <div class="anomaly-code">${escHtml(a.code)}</div>
+                                    ${escHtml(a.message)}
+                                </div>
+                            `).join('')}
+                            ${data.anomaly_count > 5 ? `<div style="font-size:11px;color:var(--text-muted);padding:4px">…and ${data.anomaly_count - 5} more</div>` : ''}
+                        </div>
+                    </div>`;
+            }
         }
 
         function importGoBack() {
