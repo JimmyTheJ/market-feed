@@ -227,6 +227,7 @@ def preview_import(
     total_new = 0
     total_dups = 0
     total_skipped = 0
+    new_txs_by_account: dict[str, list[TransactionRecord]] = {}
 
     for src_id, grp in groups.items():
         matched = src_id_map.get(src_id)
@@ -251,6 +252,8 @@ def preview_import(
                 dup_count += 1
             else:
                 new_count += 1
+                if matched:
+                    new_txs_by_account.setdefault(matched.id, []).append(tx)
 
             tx_previews.append({
                 "transaction": _tx_to_dict(tx),
@@ -272,12 +275,24 @@ def preview_import(
         total_dups += dup_count
         total_skipped += skip_count
 
+    # Analyse ledger anomalies if new transactions would be imported
+    import_anomalies = []
+    from .anomaly_detector import detect_anomalies
+
+    for matched_id, new_txs in new_txs_by_account.items():
+        existing = existing_tx_by_account.get(matched_id, [])
+        combined_result = detect_anomalies(existing + new_txs)
+        for a in combined_result.anomalies:
+            import_anomalies.append(a.model_dump(mode="json"))
+
     return {
         "account_previews": account_previews,
         "total_rows": len(rows),
         "total_new": total_new,
         "total_duplicates": total_dups,
         "total_skipped": total_skipped,
+        "anomalies": import_anomalies,
+        "anomaly_count": len(import_anomalies),
     }
 
 

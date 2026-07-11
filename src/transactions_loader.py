@@ -121,6 +121,8 @@ def save_transactions(
             entry["lot_id"] = tx.lot_id
         if tx.notes:
             entry["notes"] = tx.notes
+        if tx.external_id:
+            entry["external_id"] = tx.external_id
         tx_list.append(entry)
 
     with open(path, "w") as f:

@@ -60,6 +60,7 @@ from ..accounts_manager import (
     load_all_account_transactions,
     save_accounts,
 )
+from ..anomaly_detector import detect_anomalies, detect_profile_anomalies
 from ..csv_importer import preview_import, parse_csv, group_rows_by_account, _parse_trade_row, _generate_external_id
 from ..transactions_loader import load_all_profile_transactions, load_transactions, save_transactions
 
@@ -582,7 +583,7 @@ async def get_currencies(
     except FileNotFoundError:
         return {"currencies": list(DEFAULT_CURRENCIES)}
 
-
+
 # ── Ticker Search ───────────────────────────────────────────────────
 
 YAHOO_SEARCH_URL = "https://query2.finance.yahoo.com/v1/finance/search"
@@ -1361,3 +1362,103 @@ async def get_pnl_endpoint(
 
     pnl = compute_pnl(txs.transactions, prices, forex, method, display_currency)
     return {"pnl": pnl.model_dump(), "cost_basis_method": method}
+
+
+# ── Ledger anomaly endpoints ─────────────────────────────────────────────────
+
+
+class ApplyFixesRequest(BaseModel):
+    fix_codes: list[str] | None = None  # e.g. ["EXPIRED_OPTION_CLOSE"]; None = all
+
+
+@app.get("/api/anomalies/scan")
+async def scan_anomalies_endpoint(
+    profile: str | None = None,
+    account_id: str | None = None,
+    user: dict = Depends(require_auth),
+):
+    """Scan ledger transactions for anomalies (oversells, missing legs, expired options)."""
+    if not profile:
+        raise HTTPException(status_code=400, detail="profile parameter is required")
+
+    if account_id:
+        accts = load_accounts(profile)
+        acct_names = {a.id: a.name for a in accts.accounts}
+        txs = load_transactions(profile=profile, account_id=account_id)
+        result = detect_anomalies(
+            txs.transactions,
+            profile=profile,
+            account_id=account_id,
+            account_name=acct_names.get(account_id),
+        )
+    else:
+        accts = load_accounts(profile)
+        acct_names = {a.id: a.name for a in accts.accounts}
+        tx_by_account: dict[str, list] = {}
+        for acct in accts.accounts:
+            tx_path = get_account_transactions_path(profile, acct.id)
+            txs_file = load_transactions(path=tx_path)
+            if txs_file.transactions:
+                tx_by_account[acct.id] = txs_file.transactions
+
+        # Legacy profile-root transactions
+        legacy = load_transactions(profile=profile)
+        if legacy.transactions and not tx_by_account:
+            tx_by_account["__legacy__"] = legacy.transactions
+            acct_names["__legacy__"] = "Default"
+
+        result = detect_profile_anomalies(profile, tx_by_account, acct_names)
+
+    return result.model_dump(mode="json")
+
+
+@app.post("/api/anomalies/apply-fixes")
+async def apply_anomaly_fixes_endpoint(
+    body: ApplyFixesRequest = ApplyFixesRequest(),
+    profile: str | None = None,
+    account_id: str | None = None,
+    user: dict = Depends(require_auth),
+):
+    """Apply suggested fixes (e.g. close expired options at $0)."""
+    if not profile:
+        raise HTTPException(status_code=400, detail="profile parameter is required")
+
+    # Re-scan to get current fixes
+    scan = await scan_anomalies_endpoint(profile=profile, account_id=account_id, user=user)
+    from ..models import AnomalyScanResultWithFixes, SuggestedFix
+
+    result = AnomalyScanResultWithFixes(**scan)
+    allowed_codes = set(body.fix_codes) if body.fix_codes else None
+
+    applied = 0
+    for fix in result.suggested_fixes:
+        if allowed_codes and fix.code not in allowed_codes:
+            continue
+        target_acct = fix.account_id
+        if not target_acct or target_acct == "__legacy__":
+            txs = load_transactions(profile=profile)
+            save_target = {"profile": profile}
+        else:
+            txs = load_transactions(profile=profile, account_id=target_acct)
+            save_target = {"profile": profile, "account_id": target_acct}
+
+        # Skip if an auto-close for this contract already exists
+        tx = fix.transaction
+        already = any(
+            t.notes and "Auto-closed: option expired worthless" in t.notes
+            and t.ticker == tx.ticker
+            and t.option_type == tx.option_type
+            and t.strike == tx.strike
+            and t.expiration == tx.expiration
+            and t.action == tx.action
+            for t in txs.transactions
+        )
+        if already:
+            continue
+
+        txs.transactions.append(tx)
+        txs.transactions.sort(key=lambda t: t.date)
+        save_transactions(txs, **save_target)
+        applied += 1
+
+    return {"status": "ok", "fixes_applied": applied}
