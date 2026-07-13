@@ -12,6 +12,7 @@ Provides:
 
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
@@ -62,7 +63,13 @@ from ..accounts_manager import (
 )
 from ..anomaly_detector import detect_anomalies, detect_profile_anomalies
 from ..csv_importer import preview_import, parse_csv, group_rows_by_account, _parse_trade_row, _generate_external_id
-from ..transactions_loader import load_all_profile_transactions, load_transactions, save_transactions
+from ..transactions_loader import (
+    bulk_delete_transactions,
+    load_all_profile_transactions,
+    load_transactions,
+    rollback_import_batch,
+    save_transactions,
+)
 
 load_dotenv()
 setup_logging(os.getenv("LOG_LEVEL", "INFO"))
@@ -258,6 +265,12 @@ class TransactionCreate(BaseModel):
     expiration: Optional[str] = None
     lot_id: Optional[str] = None
     notes: str = ""
+
+
+class TransactionBulkDelete(BaseModel):
+    """Request body for deleting multiple transactions by ID."""
+
+    ids: list[str]
 
 
 class PipelineRunRequest(BaseModel):
@@ -1172,6 +1185,9 @@ async def import_confirm_endpoint(
 
     transactions_imported = 0
     transactions_skipped = 0
+    import_batch_id = str(uuid.uuid4()) if any(
+        grp["rows"] for grp in groups.values()
+    ) else None
 
     for src_id, grp in groups.items():
         matched = resolved.get(src_id)
@@ -1190,6 +1206,8 @@ async def import_confirm_endpoint(
             if tx.external_id and tx.external_id in ext_ids:
                 transactions_skipped += 1
                 continue
+            if import_batch_id:
+                tx = tx.model_copy(update={"import_batch_id": import_batch_id})
             bucket.append(tx)
             if tx.external_id:
                 ext_ids.add(tx.external_id)
@@ -1215,7 +1233,27 @@ async def import_confirm_endpoint(
         "accounts_created": accounts_created,
         "transactions_imported": transactions_imported,
         "transactions_skipped": transactions_skipped,
+        "import_batch_id": import_batch_id if transactions_imported > 0 else None,
     }
+
+
+@app.delete("/api/import/{batch_id}")
+async def rollback_import_endpoint(
+    batch_id: str,
+    profile: str | None = None,
+    user: dict = Depends(require_auth),
+):
+    """Remove all transactions from a CSV import batch across the profile."""
+    if not profile:
+        raise HTTPException(status_code=400, detail="profile parameter is required")
+
+    result = rollback_import_batch(profile, batch_id)
+    if result["deleted"] == 0:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No transactions found for import batch '{batch_id}'",
+        )
+    return {"status": "rolled_back", **result}
 
 
 # ── Transaction ledger endpoints ─────────────────────────────────────────────
@@ -1323,6 +1361,27 @@ async def delete_transaction_endpoint(
         raise HTTPException(status_code=404, detail=f"Transaction '{tx_id}' not found")
     save_transactions(txs, profile=profile, account_id=account_id)
     return {"status": "deleted", "id": tx_id}
+
+
+@app.post("/api/transactions/bulk-delete")
+async def bulk_delete_transactions_endpoint(
+    body: TransactionBulkDelete,
+    profile: str | None = None,
+    account_id: str | None = None,
+    user: dict = Depends(require_auth),
+):
+    """Delete multiple transactions by ID from one ledger."""
+    if not body.ids:
+        raise HTTPException(status_code=400, detail="ids must be a non-empty list")
+
+    removed = bulk_delete_transactions(
+        set(body.ids),
+        profile=profile,
+        account_id=account_id,
+    )
+    if removed == 0:
+        raise HTTPException(status_code=404, detail="No matching transactions found")
+    return {"status": "deleted", "deleted": removed, "requested": len(body.ids)}
 
 
 @app.get("/api/pnl")

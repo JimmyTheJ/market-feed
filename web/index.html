@@ -1375,9 +1375,15 @@
 
                 <!-- Transaction History -->
                 <div class="card">
+                    <div id="import-undo-banner" style="display:none;margin-bottom:12px;padding:10px 14px;border:1px solid var(--accent);border-radius:6px;background:rgba(99,102,241,0.08);font-size:13px">
+                        <span id="import-undo-banner-text"></span>
+                        <button class="btn btn-small btn-danger" id="import-undo-btn" onclick="undoLastImport()" style="margin-left:12px;padding:3px 10px;font-size:12px">Undo import</button>
+                        <button class="btn btn-small" onclick="dismissImportBanner()" style="margin-left:6px;padding:3px 10px;font-size:12px">Dismiss</button>
+                    </div>
                     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
                         <h2 style="margin-bottom:0">Transactions</h2>
                         <div style="display:flex;gap:8px;align-items:center">
+                            <button class="btn btn-danger" id="tx-bulk-delete-btn" onclick="bulkDeleteTx()" style="display:none;padding:5px 12px;font-size:12px">Delete selected</button>
                             <input type="text" id="tx-filter-ticker" placeholder="Filter ticker…"
                                    style="width:130px;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:12px"
                                    oninput="renderTransactions()">
@@ -1388,6 +1394,7 @@
                         <table class="ledger-table">
                             <thead>
                                 <tr>
+                                    <th style="width:32px"><input type="checkbox" id="tx-select-all" title="Select all" onchange="toggleSelectAllTx(this.checked)"></th>
                                     <th>Date</th>
                                     <th>Ticker</th>
                                     <th>Action</th>
@@ -1401,7 +1408,7 @@
                                 </tr>
                             </thead>
                             <tbody id="tx-table-body">
-                                <tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:20px">No transactions yet</td></tr>
+                                <tr><td colspan="11" style="text-align:center;color:var(--text-muted);padding:20px">No transactions yet</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -1467,7 +1474,10 @@
             <div id="import-step-done" style="display:none;text-align:center;padding:24px 0">
                 <div style="font-size:40px;margin-bottom:12px">✅</div>
                 <div id="import-done-msg" style="color:var(--text);margin-bottom:20px"></div>
-                <button class="btn btn-primary" onclick="closeImportModal()">Done</button>
+                <div id="import-done-actions" style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+                    <button class="btn btn-danger" id="import-undo-modal-btn" onclick="undoLastImport(true)" style="display:none">Undo import</button>
+                    <button class="btn btn-primary" onclick="closeImportModal()">Done</button>
+                </div>
             </div>
         </div>
     </div>
@@ -2677,6 +2687,8 @@
         // ── Ledger / Transactions ────────────────────────────────────────
 
         let currentTransactions = [];
+        let selectedTxIds = new Set();
+        let _lastImportBatch = null; // { batchId, count } after a successful import
         let currentPnl = null;
 
         function toggleTxOptionFields() {
@@ -2797,6 +2809,7 @@
                 const acctParam = currentAccountId ? `account_id=${encodeURIComponent(currentAccountId)}` : '';
                 const res = await apiFetch(apiUrl(`/api/transactions/${txId}`, acctParam), { method: 'DELETE' });
                 if (res.ok) {
+                    selectedTxIds.delete(txId);
                     showToast('Transaction deleted');
                     await loadTransactions();
                     loadPnl();
@@ -2809,16 +2822,133 @@
             }
         }
 
+        function updateBulkDeleteButton() {
+            const btn = document.getElementById('tx-bulk-delete-btn');
+            if (!btn) return;
+            const count = selectedTxIds.size;
+            if (count > 0) {
+                btn.style.display = 'inline-block';
+                btn.textContent = `Delete selected (${count})`;
+            } else {
+                btn.style.display = 'none';
+            }
+        }
+
+        function toggleTxSelect(txId, checked) {
+            if (checked) selectedTxIds.add(txId);
+            else selectedTxIds.delete(txId);
+            updateBulkDeleteButton();
+            const selectAll = document.getElementById('tx-select-all');
+            if (selectAll) {
+                const filter = document.getElementById('tx-filter-ticker')?.value.trim().toUpperCase() || '';
+                const visible = filter
+                    ? currentTransactions.filter(t => t.ticker.includes(filter))
+                    : currentTransactions;
+                selectAll.checked = visible.length > 0 && visible.every(t => selectedTxIds.has(t.id));
+            }
+        }
+
+        function toggleSelectAllTx(checked) {
+            const filter = document.getElementById('tx-filter-ticker')?.value.trim().toUpperCase() || '';
+            const visible = filter
+                ? currentTransactions.filter(t => t.ticker.includes(filter))
+                : currentTransactions;
+            if (checked) {
+                visible.forEach(t => selectedTxIds.add(t.id));
+            } else {
+                visible.forEach(t => selectedTxIds.delete(t.id));
+            }
+            renderTransactions();
+        }
+
+        async function bulkDeleteTx() {
+            const ids = [...selectedTxIds];
+            if (!ids.length) return;
+            if (!confirm(`Delete ${ids.length} selected transaction${ids.length !== 1 ? 's' : ''}? This cannot be undone.`)) return;
+            try {
+                const acctParam = currentAccountId ? `account_id=${encodeURIComponent(currentAccountId)}` : '';
+                const res = await apiFetch(apiUrl('/api/transactions/bulk-delete', acctParam), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids }),
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    selectedTxIds.clear();
+                    showToast(`Deleted ${data.deleted} transaction${data.deleted !== 1 ? 's' : ''}`);
+                    await loadTransactions();
+                    loadPnl();
+                } else {
+                    const err = await res.json();
+                    showToast(err.detail || 'Bulk delete failed', 'error');
+                }
+            } catch (e) {
+                showToast('Network error', 'error');
+            }
+        }
+
+        function showImportUndoBanner() {
+            if (!_lastImportBatch) return;
+            const banner = document.getElementById('import-undo-banner');
+            const text = document.getElementById('import-undo-banner-text');
+            if (!banner || !text) return;
+            const n = _lastImportBatch.count;
+            text.textContent = `Imported ${n} transaction${n !== 1 ? 's' : ''}. You can undo this import to remove them all.`;
+            banner.style.display = 'block';
+        }
+
+        function dismissImportBanner() {
+            _lastImportBatch = null;
+            const banner = document.getElementById('import-undo-banner');
+            if (banner) banner.style.display = 'none';
+        }
+
+        async function undoLastImport(fromModal = false) {
+            if (!_lastImportBatch?.batchId) return;
+            const n = _lastImportBatch.count;
+            if (!confirm(`Undo import and remove ${n} transaction${n !== 1 ? 's' : ''}? This cannot be undone.`)) return;
+            const btn = document.getElementById(fromModal ? 'import-undo-modal-btn' : 'import-undo-btn');
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Undoing…';
+            }
+            try {
+                const res = await apiFetch(apiUrl(`/api/import/${encodeURIComponent(_lastImportBatch.batchId)}`), { method: 'DELETE' });
+                if (res.ok) {
+                    const data = await res.json();
+                    _lastImportBatch = null;
+                    dismissImportBanner();
+                    showToast(`Rolled back ${data.deleted} transaction${data.deleted !== 1 ? 's' : ''}`);
+                    await loadAccounts();
+                    await loadTransactions();
+                    loadPnl();
+                    if (fromModal) closeImportModal();
+                } else {
+                    const err = await res.json();
+                    showToast(err.detail || 'Undo failed', 'error');
+                }
+            } catch (e) {
+                showToast('Network error', 'error');
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = 'Undo import';
+                }
+            }
+        }
+
         async function loadTransactions() {
             try {
                 const acctParam = currentAccountId ? `account_id=${encodeURIComponent(currentAccountId)}` : '';
                 const res = await apiFetch(apiUrl('/api/transactions', acctParam));
                 const data = await res.json();
                 currentTransactions = data.transactions || [];
+                const validIds = new Set(currentTransactions.map(t => t.id));
+                selectedTxIds = new Set([...selectedTxIds].filter(id => validIds.has(id)));
                 renderTransactions();
             } catch (e) {
                 document.getElementById('tx-table-body').innerHTML =
-                    '<tr><td colspan="10" style="color:var(--red);text-align:center;padding:16px">Failed to load transactions</td></tr>';
+                    '<tr><td colspan="11" style="color:var(--red);text-align:center;padding:16px">Failed to load transactions</td></tr>';
             }
         }
 
@@ -2830,7 +2960,10 @@
                 : currentTransactions;
 
             if (!txs.length) {
-                tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:20px">${filter ? 'No transactions match filter' : 'No transactions yet'}</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;color:var(--text-muted);padding:20px">${filter ? 'No transactions match filter' : 'No transactions yet'}</td></tr>`;
+                updateBulkDeleteButton();
+                const selectAll = document.getElementById('tx-select-all');
+                if (selectAll) selectAll.checked = false;
                 return;
             }
 
@@ -2840,7 +2973,9 @@
                 const typeLabel = tx.position_type === 'option'
                     ? `${tx.option_type} ${tx.strike} ${tx.expiration ? tx.expiration.slice(0, 7) : ''}`
                     : 'equity';
+                const checked = selectedTxIds.has(tx.id) ? 'checked' : '';
                 return `<tr>
+                    <td><input type="checkbox" ${checked} onchange="toggleTxSelect('${tx.id}', this.checked)"></td>
                     <td style="white-space:nowrap">${tx.date}</td>
                     <td style="font-weight:700;font-family:'SF Mono',monospace">${tx.ticker}</td>
                     <td class="${actionClass}">${tx.action.toUpperCase()}</td>
@@ -2856,6 +2991,12 @@
                     </td>
                 </tr>`;
             }).join('');
+
+            const selectAll = document.getElementById('tx-select-all');
+            if (selectAll) {
+                selectAll.checked = txs.length > 0 && txs.every(t => selectedTxIds.has(t.id));
+            }
+            updateBulkDeleteButton();
         }
 
         async function loadPnl() {
@@ -2998,6 +3139,7 @@
 
         function switchAccount(id) {
             currentAccountId = id;
+            selectedTxIds.clear();
             renderAccountTabs();
             loadTransactions();
             loadPnl();
@@ -3261,6 +3403,12 @@
             document.getElementById('import-step-pick').style.display = 'block';
             document.getElementById('import-step-preview').style.display = 'none';
             document.getElementById('import-step-done').style.display = 'none';
+            const undoBtn = document.getElementById('import-undo-modal-btn');
+            if (undoBtn) {
+                undoBtn.style.display = 'none';
+                undoBtn.disabled = false;
+                undoBtn.textContent = 'Undo import';
+            }
             document.getElementById('import-modal').classList.add('open');
             // Wire drag-and-drop on drop zone
             const dz = document.getElementById('import-drop-zone');
@@ -3280,6 +3428,7 @@
             _importPreviewData = null;
             _importMapping = {};
             _importCustomLabels = [];
+            if (_lastImportBatch) showImportUndoBanner();
             // Reload accounts in case something was imported
             loadAccounts();
         }
@@ -3475,6 +3624,14 @@
                     across <strong>${data.accounts_created > 0 ? data.accounts_created : 'existing'}</strong> account${data.accounts_created !== 1 ? 's' : ''}
                     ${data.accounts_created > 0 ? '(new)' : ''}.
                     ${data.transactions_skipped > 0 ? `<br><span style="color:var(--text-muted);font-size:13px">${data.transactions_skipped} duplicates/skipped.</span>` : ''}`;
+                const undoBtn = document.getElementById('import-undo-modal-btn');
+                if (data.import_batch_id && data.transactions_imported > 0) {
+                    _lastImportBatch = { batchId: data.import_batch_id, count: data.transactions_imported };
+                    if (undoBtn) undoBtn.style.display = 'inline-block';
+                } else {
+                    _lastImportBatch = null;
+                    if (undoBtn) undoBtn.style.display = 'none';
+                }
             } catch (e) {
                 showToast('Network error during import', 'error');
                 btn.disabled = false;
