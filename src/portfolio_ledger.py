@@ -1,16 +1,19 @@
 """Portfolio P&L computation engine.
 
-Supports three cost-basis methods:
-  - fifo          – matches sells against oldest lots first
-  - average_cost  – tracks weighted average cost; realized P&L = (sell - avg) × qty
-  - specific_lot  – sell optionally references a specific buy via lot_id; falls back to FIFO
+Supports signed positions: buy-to-open is positive, sell-to-open is negative.
+Short option/equity lots are tracked separately from long lots.
+
+Cost-basis methods:
+  - fifo          – matches closes against oldest lots first (supports shorts)
+  - average_cost  – long-only weighted average; shorts use signed FIFO
+  - specific_lot  – lot_id matching with FIFO fallback; shorts use signed FIFO
 """
 
 from __future__ import annotations
 
 import logging
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Optional
 
@@ -36,9 +39,29 @@ CONTRACT_MULTIPLIER = 100  # one option contract = 100 shares of the underlying
 class _Lot:
     transaction_id: str
     date: date
-    quantity: float
+    quantity: float  # always positive within the lot
     cost_per_unit: float  # per share (equity) or per-share-premium (option)
     currency: str
+
+
+@dataclass
+class _PositionBook:
+    """Signed position state for one instrument."""
+
+    long_lots: deque[_Lot] = field(default_factory=deque)
+    short_lots: deque[_Lot] = field(default_factory=deque)
+
+    @property
+    def long_qty(self) -> float:
+        return sum(lot.quantity for lot in self.long_lots)
+
+    @property
+    def short_qty(self) -> float:
+        return sum(lot.quantity for lot in self.short_lots)
+
+    @property
+    def net_signed_qty(self) -> float:
+        return self.long_qty - self.short_qty
 
 
 # ── Instrument helpers ────────────────────────────────────────────────────────
@@ -51,15 +74,31 @@ def _instrument_key(tx: TransactionRecord) -> str:
     return f"{tx.ticker}__equity"
 
 
-def _option_label(tx: TransactionRecord) -> str:
+def _option_label(
+    tx: TransactionRecord | None = None,
+    *,
+    ticker: str = "",
+    option_type: str | None = None,
+    strike: float | None = None,
+    expiration: str | None = None,
+    direction: str | None = None,
+) -> str:
     """Human-readable label for an option contract."""
-    parts = [tx.ticker]
-    if tx.strike is not None:
-        parts.append(f"${tx.strike:.0f}")
-    if tx.option_type:
-        parts.append(tx.option_type)
-    if tx.expiration:
-        parts.append(f"exp {tx.expiration}")
+    if tx is not None:
+        ticker = tx.ticker
+        option_type = tx.option_type
+        strike = tx.strike
+        expiration = tx.expiration
+        direction = tx.option_direction
+    parts = [ticker]
+    if strike is not None:
+        parts.append(f"${strike:.0f}")
+    if option_type:
+        parts.append(option_type)
+    if expiration:
+        parts.append(f"exp {expiration}")
+    if direction:
+        parts.append(f"({direction.upper()})")
     return " ".join(parts)
 
 
@@ -67,75 +106,164 @@ def _multiplier(position_type: str) -> int:
     return CONTRACT_MULTIPLIER if position_type == "option" else 1
 
 
-# ── FIFO matching ─────────────────────────────────────────────────────────────
+def _cost_per_unit(tx: TransactionRecord) -> float:
+    mult = _multiplier(tx.position_type)
+    comm_per_share = tx.commission / (tx.quantity * mult) if tx.quantity else 0.0
+    return tx.price + comm_per_share
 
 
-def _apply_sell_fifo(
-    lots: deque[_Lot],
-    sell_qty: float,
-    sell_price: float,
-    position_type: str,
-) -> float:
-    """Match a sell against the front of *lots* (FIFO). Returns realized P&L."""
-    mult = _multiplier(position_type)
+# ── Lot matching helpers ──────────────────────────────────────────────────────
+
+
+def _close_long_lots(
+    lots: deque[_Lot], qty: float, close_price: float, mult: int
+) -> tuple[float, float]:
+    """Close long lots FIFO. Returns (realized_pnl, unmatched_qty)."""
     realized = 0.0
-    remaining = sell_qty
-    while remaining > 0 and lots:
+    remaining = qty
+    while remaining > 1e-9 and lots:
         lot = lots[0]
         match_qty = min(remaining, lot.quantity)
-        realized += (sell_price - lot.cost_per_unit) * match_qty * mult
+        realized += (close_price - lot.cost_per_unit) * match_qty * mult
         lot.quantity -= match_qty
         remaining -= match_qty
         if lot.quantity <= 1e-9:
             lots.popleft()
-    if remaining > 1e-9:
-        logger.warning(
-            f"Sell of {sell_qty} units exceeds known open lots; {remaining:.4f} unmatched."
+    return realized, remaining
+
+
+def _close_short_lots(
+    lots: deque[_Lot], qty: float, close_price: float, mult: int
+) -> tuple[float, float]:
+    """Close short lots FIFO. Returns (realized_pnl, unmatched_qty)."""
+    realized = 0.0
+    remaining = qty
+    while remaining > 1e-9 and lots:
+        lot = lots[0]
+        match_qty = min(remaining, lot.quantity)
+        # Short P&L: credit at open minus cost to close
+        realized += (lot.cost_per_unit - close_price) * match_qty * mult
+        lot.quantity -= match_qty
+        remaining -= match_qty
+        if lot.quantity <= 1e-9:
+            lots.popleft()
+    return realized, remaining
+
+
+def _open_long_lot(book: _PositionBook, tx: TransactionRecord) -> None:
+    book.long_lots.append(
+        _Lot(
+            transaction_id=tx.id,
+            date=tx.date,
+            quantity=tx.quantity,
+            cost_per_unit=_cost_per_unit(tx),
+            currency=tx.currency,
         )
+    )
+
+
+def _open_short_lot(book: _PositionBook, tx: TransactionRecord, qty: float) -> None:
+    mult = _multiplier(tx.position_type)
+    comm_per_share = tx.commission * (qty / tx.quantity) / (qty * mult) if qty else 0.0
+    credit_per_unit = tx.price + comm_per_share
+    book.short_lots.append(
+        _Lot(
+            transaction_id=tx.id,
+            date=tx.date,
+            quantity=qty,
+            cost_per_unit=credit_per_unit,
+            currency=tx.currency,
+        )
+    )
+
+
+def _process_transaction(book: _PositionBook, tx: TransactionRecord) -> float:
+    """Apply one transaction to a position book. Returns realized P&L."""
+    mult = _multiplier(tx.position_type)
+    realized = 0.0
+
+    if tx.position_type == "option":
+        direction = (tx.option_direction or "LONG").upper()
+        if tx.action == "buy":
+            if direction == "SHORT":
+                r, unmatched = _close_short_lots(book.short_lots, tx.quantity, tx.price, mult)
+                realized += r
+                if unmatched > 1e-9:
+                    logger.warning(
+                        f"Buy-to-close {tx.quantity} {tx.ticker} option on {tx.date}: "
+                        f"{unmatched:.4f} contracts unmatched to short lots."
+                    )
+            else:
+                _open_long_lot(book, tx)
+        else:  # sell
+            if direction == "SHORT":
+                _open_short_lot(book, tx, tx.quantity)
+            else:
+                r, unmatched = _close_long_lots(book.long_lots, tx.quantity, tx.price, mult)
+                realized += r
+                if unmatched > 1e-9:
+                    logger.warning(
+                        f"Sell-to-close {tx.quantity} {tx.ticker} option on {tx.date}: "
+                        f"{unmatched:.4f} contracts exceed long lots."
+                    )
+    else:
+        # Equity: buy covers shorts first; sell closes longs then may open short
+        if tx.action == "buy":
+            remaining = tx.quantity
+            if book.short_qty > 1e-9:
+                r, remaining = _close_short_lots(book.short_lots, remaining, tx.price, mult)
+                realized += r
+            if remaining > 1e-9:
+                long_tx = tx.model_copy(update={"quantity": remaining})
+                _open_long_lot(book, long_tx)
+        else:
+            r, remaining = _close_long_lots(book.long_lots, tx.quantity, tx.price, mult)
+            realized += r
+            if remaining > 1e-9:
+                _open_short_lot(book, tx, remaining)
+
     return realized
 
 
-def _compute_fifo(
+def build_position_books(
     transactions: list[TransactionRecord],
-) -> tuple[dict[str, deque[_Lot]], dict[str, float]]:
-    lots_by_key: dict[str, deque[_Lot]] = {}
+) -> tuple[dict[str, _PositionBook], dict[str, float]]:
+    """Replay transactions into signed position books (signed FIFO)."""
+    books: dict[str, _PositionBook] = {}
     realized_by_key: dict[str, float] = {}
 
-    for tx in sorted(transactions, key=lambda t: t.date):
+    for tx in sorted(transactions, key=lambda t: (t.date, t.id)):
         key = _instrument_key(tx)
-        if key not in lots_by_key:
-            lots_by_key[key] = deque()
+        if key not in books:
+            books[key] = _PositionBook()
+        r = _process_transaction(books[key], tx)
+        if r:
+            realized_by_key[key] = realized_by_key.get(key, 0.0) + r
 
-        if tx.action == "buy":
-            mult = _multiplier(tx.position_type)
-            comm_per_share = tx.commission / (tx.quantity * mult) if tx.quantity else 0.0
-            cost_per_unit = tx.price + comm_per_share
-            lots_by_key[key].append(
-                _Lot(
-                    transaction_id=tx.id,
-                    date=tx.date,
-                    quantity=tx.quantity,
-                    cost_per_unit=cost_per_unit,
-                    currency=tx.currency,
-                )
-            )
-        elif tx.action == "sell":
-            realized = _apply_sell_fifo(
-                lots_by_key[key], tx.quantity, tx.price, tx.position_type
-            )
-            realized_by_key[key] = realized_by_key.get(key, 0.0) + realized
-
-    return lots_by_key, realized_by_key
+    return books, realized_by_key
 
 
-# ── Average cost matching─────────────────────────────────────────────────────
+# ── Legacy average-cost / specific-lot (long-only fallback) ───────────────────
+
+
+def _books_to_long_lots(books: dict[str, _PositionBook]) -> dict[str, deque[_Lot]]:
+    """Expose only long lots for backward-compatible consumers."""
+    return {key: book.long_lots for key, book in books.items() if book.long_qty > 1e-9}
 
 
 def _compute_average_cost(
     transactions: list[TransactionRecord],
-) -> tuple[dict[str, deque[_Lot]], dict[str, float]]:
-    # Track (total_shares, total_cost) per key
-    buckets: dict[str, list[float]] = {}  # key -> [qty, cost]
+) -> tuple[dict[str, _PositionBook], dict[str, float]]:
+    has_short_intent = any(
+        (t.position_type == "option" and (t.option_direction or "").upper() == "SHORT")
+        or (t.position_type == "equity" and t.action == "sell")
+        for t in transactions
+    )
+    if has_short_intent:
+        logger.debug("average_cost: using signed FIFO because short positions are present")
+        return build_position_books(transactions)
+
+    buckets: dict[str, list[float]] = {}
     realized_by_key: dict[str, float] = {}
 
     for tx in sorted(transactions, key=lambda t: t.date):
@@ -160,55 +288,62 @@ def _compute_average_cost(
             else:
                 logger.warning(f"Sell of {tx.ticker} on {tx.date}: no known lots")
 
-    # Convert buckets to Lot records for the open-position representation
-    lots_by_key: dict[str, deque[_Lot]] = {}
+    books: dict[str, _PositionBook] = {}
     for key, (qty, cost) in buckets.items():
         if qty > 1e-9:
-            pos_type = "option" if "__" in key and key.count("__") == 1 and "_" in key.split("__")[1] else "equity"
+            pos_type = (
+                "option"
+                if "__" in key and key.count("__") == 1 and "_" in key.split("__")[1]
+                else "equity"
+            )
             mult = _multiplier(pos_type)
             avg_cost_per_unit = cost / (qty * mult) if qty > 0 else 0.0
-            lots_by_key[key] = deque(
-                [
-                    _Lot(
-                        transaction_id="avg_cost_bucket",
-                        date=date.min,
-                        quantity=qty,
-                        cost_per_unit=avg_cost_per_unit,
-                        currency="",
-                    )
-                ]
+            books[key] = _PositionBook(
+                long_lots=deque(
+                    [
+                        _Lot(
+                            transaction_id="avg_cost_bucket",
+                            date=date.min,
+                            quantity=qty,
+                            cost_per_unit=avg_cost_per_unit,
+                            currency="",
+                        )
+                    ]
+                )
             )
 
-    return lots_by_key, realized_by_key
-
-
-# ── Specific-lot matching ─────────────────────────────────────────────────────
+    return books, realized_by_key
 
 
 def _compute_specific_lot(
     transactions: list[TransactionRecord],
-) -> tuple[dict[str, deque[_Lot]], dict[str, float]]:
-    lots_by_key: dict[str, deque[_Lot]] = {}
+) -> tuple[dict[str, _PositionBook], dict[str, float]]:
+    has_short_intent = any(
+        t.position_type == "option" and (t.option_direction or "").upper() == "SHORT"
+        for t in transactions
+    )
+    if has_short_intent:
+        logger.debug("specific_lot: using signed FIFO because short options are present")
+        return build_position_books(transactions)
+
+    books: dict[str, _PositionBook] = {}
     lots_by_id: dict[str, _Lot] = {}
     realized_by_key: dict[str, float] = {}
 
     for tx in sorted(transactions, key=lambda t: t.date):
         key = _instrument_key(tx)
-        if key not in lots_by_key:
-            lots_by_key[key] = deque()
+        if key not in books:
+            books[key] = _PositionBook()
 
         if tx.action == "buy":
-            mult = _multiplier(tx.position_type)
-            comm_per_share = tx.commission / (tx.quantity * mult) if tx.quantity else 0.0
-            cost_per_unit = tx.price + comm_per_share
             lot = _Lot(
                 transaction_id=tx.id,
                 date=tx.date,
                 quantity=tx.quantity,
-                cost_per_unit=cost_per_unit,
+                cost_per_unit=_cost_per_unit(tx),
                 currency=tx.currency,
             )
-            lots_by_key[key].append(lot)
+            books[key].long_lots.append(lot)
             lots_by_id[tx.id] = lot
         elif tx.action == "sell":
             mult = _multiplier(tx.position_type)
@@ -220,30 +355,23 @@ def _compute_specific_lot(
                 lot.quantity -= match_qty
                 remainder = tx.quantity - match_qty
                 if remainder > 1e-9:
-                    realized_fifo = _apply_sell_fifo(
-                        lots_by_key[key], remainder, tx.price, tx.position_type
-                    )
-                    realized_by_key[key] += realized_fifo
+                    r, _ = _close_long_lots(books[key].long_lots, remainder, tx.price, mult)
+                    realized_by_key[key] += r
             else:
-                realized = _apply_sell_fifo(
-                    lots_by_key[key], tx.quantity, tx.price, tx.position_type
-                )
-                realized_by_key[key] = realized_by_key.get(key, 0.0) + realized
+                r, _ = _close_long_lots(books[key].long_lots, tx.quantity, tx.price, mult)
+                realized_by_key[key] = realized_by_key.get(key, 0.0) + r
 
-    return lots_by_key, realized_by_key
-
-
-# ── Dispatch ──────────────────────────────────────────────────────────────────
+    return books, realized_by_key
 
 
 def _compute_lots_and_realized(
     transactions: list[TransactionRecord], method: str
-) -> tuple[dict[str, deque[_Lot]], dict[str, float]]:
+) -> tuple[dict[str, _PositionBook], dict[str, float]]:
     if method == "average_cost":
         return _compute_average_cost(transactions)
     if method == "specific_lot":
         return _compute_specific_lot(transactions)
-    return _compute_fifo(transactions)
+    return build_position_books(transactions)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -253,15 +381,9 @@ def derive_positions_from_transactions(
     transactions: list[TransactionRecord],
     currencies: list[str] | None = None,
 ) -> PositionsFile:
-    """Derive the current open positions from a transaction history.
+    """Derive open positions with signed quantity (negative = short)."""
+    books, _ = build_position_books(transactions)
 
-    Uses FIFO to compute net holdings per instrument.  Returns a
-    :class:`PositionsFile` that is a drop-in replacement for
-    ``load_positions()`` in the pipeline.
-    """
-    lots_by_key, _ = _compute_fifo(transactions)
-
-    # Build a lookup of the earliest transaction per instrument for metadata
     meta: dict[str, TransactionRecord] = {}
     for tx in sorted(transactions, key=lambda t: t.date):
         key = _instrument_key(tx)
@@ -269,20 +391,21 @@ def derive_positions_from_transactions(
             meta[key] = tx
 
     positions: list[Position] = []
-    for key, lots in lots_by_key.items():
-        net_qty = sum(lot.quantity for lot in lots)
-        if net_qty <= 1e-9:
+    for key, book in books.items():
+        net = book.net_signed_qty
+        if abs(net) <= 1e-9:
             continue
         tx_meta = meta[key]
+        is_short = net < 0
         if tx_meta.position_type == "option":
             positions.append(
                 Position(
                     ticker=tx_meta.ticker,
-                    shares=round(net_qty, 6),
+                    shares=round(net, 6),
                     currency=tx_meta.currency,
                     position_type="option",
                     option_type=tx_meta.option_type,
-                    option_direction=tx_meta.option_direction,
+                    option_direction="SHORT" if is_short else "LONG",
                     strike=tx_meta.strike,
                     expiration=tx_meta.expiration,
                 )
@@ -291,7 +414,7 @@ def derive_positions_from_transactions(
             positions.append(
                 Position(
                     ticker=tx_meta.ticker,
-                    shares=round(net_qty, 6),
+                    shares=round(net, 6),
                     currency=tx_meta.currency,
                     position_type=tx_meta.position_type,
                 )
@@ -309,39 +432,28 @@ def compute_pnl(
     forex: dict[str, float],
     method: str = "fifo",
     display_currency: str = "USD",
+    option_prices: dict[str, float] | None = None,
 ) -> PortfolioPnL:
-    """Compute full portfolio P&L.
-
-    Args:
-        transactions: All trade records (order does not matter; sorted internally).
-        prices: Current market price keyed by ticker symbol.
-        forex: Rates from each native currency to *display_currency*
-               (e.g. ``{"USD": 1.0, "CAD": 0.73}``).
-        method: One of ``"fifo"``, ``"average_cost"``, ``"specific_lot"``.
-        display_currency: Currency for portfolio totals.
-
-    Returns:
-        :class:`PortfolioPnL` with per-position and aggregate stats.
-    """
+    """Compute full portfolio P&L including short positions."""
     if method not in VALID_METHODS:
         logger.warning(f"Unknown cost basis method '{method}', falling back to FIFO")
         method = "fifo"
 
-    lots_by_key, realized_by_key = _compute_lots_and_realized(transactions, method)
+    books, realized_by_key = _compute_lots_and_realized(transactions, method)
+    option_prices = option_prices or {}
 
-    # Instrument metadata lookups
     currency_by_key: dict[str, str] = {}
     pos_type_by_key: dict[str, str] = {}
-    opt_label_by_key: dict[str, str] = {}
+    opt_meta_by_key: dict[str, TransactionRecord] = {}
     for tx in transactions:
         key = _instrument_key(tx)
         if key not in currency_by_key:
             currency_by_key[key] = tx.currency
             pos_type_by_key[key] = tx.position_type
             if tx.position_type == "option":
-                opt_label_by_key[key] = _option_label(tx)
+                opt_meta_by_key[key] = tx
 
-    all_keys = sorted(set(realized_by_key) | set(lots_by_key))
+    all_keys = sorted(set(realized_by_key) | set(books))
 
     position_list: list[PositionPnL] = []
     total_realized_disp = 0.0
@@ -356,30 +468,47 @@ def compute_pnl(
         fx = forex.get(currency, 1.0)
         ticker = key.split("__")[0]
 
-        lots = lots_by_key.get(key, deque())
-        open_qty = sum(lot.quantity for lot in lots)
+        book = books.get(key, _PositionBook())
+        net_qty = book.net_signed_qty
+        is_short = net_qty < -1e-9
+        is_long = net_qty > 1e-9
+        open_qty = net_qty  # signed
 
-        # Open position cost basis
-        if open_qty > 1e-9 and lots:
-            total_lot_cost = sum(lot.cost_per_unit * lot.quantity for lot in lots)
-            avg_cost = total_lot_cost / open_qty
-            total_cost_native = avg_cost * open_qty * mult
+        # Cost basis / credit at open
+        if is_long:
+            total_lot_cost = sum(lot.cost_per_unit * lot.quantity for lot in book.long_lots)
+            avg_cost = total_lot_cost / book.long_qty
+            total_cost_native = avg_cost * book.long_qty * mult
+        elif is_short:
+            total_credit = sum(lot.cost_per_unit * lot.quantity for lot in book.short_lots)
+            avg_cost = total_credit / book.short_qty
+            total_cost_native = total_credit * mult  # premium received (positive)
         else:
             avg_cost = 0.0
             total_cost_native = 0.0
 
-        # Current value and unrealized P&L.
-        # For options we only have the underlying stock price, not the option
-        # premium — using it would yield the notional shares value rather than
-        # the option's market value.  Mark as unavailable instead.
-        current_price = prices.get(ticker)
+        # Current price lookup
+        current_price: float | None = None
+        if pos_type == "option":
+            opt_tx = opt_meta_by_key.get(key)
+            if opt_tx and opt_tx.option_type and opt_tx.strike and opt_tx.expiration:
+                opt_key = f"{ticker}_{opt_tx.option_type}_{opt_tx.strike}_{opt_tx.expiration}"
+                current_price = option_prices.get(opt_key)
+        else:
+            current_price = prices.get(ticker)
+
         current_value_native: Optional[float] = None
         unrealized_native: Optional[float] = None
         unrealized_pct: Optional[float] = None
 
-        if current_price is not None and open_qty > 1e-9 and pos_type != "option":
-            current_value_native = current_price * open_qty * mult
-            unrealized_native = current_value_native - total_cost_native
+        if current_price is not None and abs(net_qty) > 1e-9:
+            if is_long:
+                current_value_native = current_price * book.long_qty * mult
+                unrealized_native = current_value_native - total_cost_native
+            elif is_short:
+                liability = current_price * book.short_qty * mult
+                current_value_native = -liability
+                unrealized_native = total_cost_native - liability
             if total_cost_native != 0:
                 unrealized_pct = (unrealized_native / abs(total_cost_native)) * 100.0
 
@@ -388,10 +517,9 @@ def compute_pnl(
         total_pl_native: Optional[float] = None
         if unrealized_native is not None:
             total_pl_native = realized_native + unrealized_native
-        elif open_qty <= 1e-9:
+        elif abs(net_qty) <= 1e-9:
             total_pl_native = realized_native
 
-        # Convert to display currency
         realized_disp = realized_native * fx
         unrealized_disp: Optional[float] = (
             unrealized_native * fx if unrealized_native is not None else None
@@ -404,12 +532,11 @@ def compute_pnl(
             current_value_native * fx if current_value_native is not None else None
         )
 
-        # Accumulate portfolio totals
         total_realized_disp += realized_disp
         if unrealized_disp is not None and total_unrealized_disp is not None:
             total_unrealized_disp += unrealized_disp
         else:
-            total_unrealized_disp = None  # partial — some prices unavailable
+            total_unrealized_disp = None
         total_cost_basis_disp += cost_basis_disp
         if current_value_disp is not None and total_market_value_disp is not None:
             total_market_value_disp += current_value_disp
@@ -419,12 +546,21 @@ def compute_pnl(
         def _r2(v: float | None) -> float | None:
             return round(v, 2) if v is not None else None
 
+        opt_tx = opt_meta_by_key.get(key)
+        direction = None
+        if pos_type == "option":
+            direction = "SHORT" if is_short else "LONG"
+        label = ""
+        if opt_tx:
+            label = _option_label(opt_tx, direction=direction)
+
         position_list.append(
             PositionPnL(
                 instrument_key=key,
                 ticker=ticker,
                 position_type=pos_type,
-                option_label=opt_label_by_key.get(key, ""),
+                option_label=label,
+                option_direction=direction,
                 currency=currency,
                 open_quantity=round(open_qty, 6),
                 avg_cost_basis=round(avg_cost, 4),
@@ -448,7 +584,6 @@ def compute_pnl(
     total_pl: Optional[float] = None
     if total_unrealized_disp is not None:
         total_pl = total_realized_disp + total_unrealized_disp
-    # else: cannot compute without all prices
 
     return PortfolioPnL(
         computed_at=datetime.now(),

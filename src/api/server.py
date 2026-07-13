@@ -1352,15 +1352,27 @@ async def get_pnl_endpoint(
     except Exception:
         pass
 
-    tickers = list({t.ticker for t in txs.transactions if t.position_type != "cash"})
+    tickers = list({t.ticker for t in txs.transactions if t.position_type == "equity"})
     prices = get_prices(tickers) if tickers else {}
+
+    # Fetch option premiums for open option positions
+    option_prices: dict[str, float] = {}
+    for t in txs.transactions:
+        if t.position_type == "option" and t.option_type and t.strike and t.expiration:
+            opt_key = f"{t.ticker}_{t.option_type}_{t.strike}_{t.expiration}"
+            if opt_key not in option_prices:
+                premium = get_option_price(t.ticker, t.expiration, t.option_type, t.strike)
+                if premium is not None:
+                    option_prices[opt_key] = premium
 
     native_currencies = list({t.currency for t in txs.transactions})
     if display_currency not in native_currencies:
         native_currencies.append(display_currency)
     forex = get_rates_to(display_currency, native_currencies)
 
-    pnl = compute_pnl(txs.transactions, prices, forex, method, display_currency)
+    pnl = compute_pnl(
+        txs.transactions, prices, forex, method, display_currency, option_prices=option_prices
+    )
     return {"pnl": pnl.model_dump(), "cost_basis_method": method}
 
 

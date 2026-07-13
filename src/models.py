@@ -326,10 +326,11 @@ class PositionPnL(BaseModel):
     instrument_key: str  # e.g. "TSLA__equity" or "TSLA__CALL_300_2026-06-20"
     ticker: str
     position_type: str  # "equity" or "option"
-    option_label: str = ""  # human-readable for options e.g. "TSLA $300 CALL exp 2026-06-20"
+    option_label: str = ""  # human-readable for options e.g. "TSLA $300 CALL exp 2026-06-20 (LONG)"
+    option_direction: Optional[str] = None  # "LONG" or "SHORT" when position_type is option
     currency: str  # native trade currency
 
-    # Open position
+    # Open position (signed: negative = short)
     open_quantity: float = 0.0  # 0 if fully closed
     avg_cost_basis: float = 0.0  # per unit (per share; or per-share-premium for options)
     total_cost_basis_native: float = 0.0  # total cost in native currency (incl. multiplier)
