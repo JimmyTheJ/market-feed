@@ -944,6 +944,17 @@
         .ledger-table tr:hover td { background: rgba(255,255,255,0.03); }
         .ledger-action-buy { color: var(--green); font-weight: 600; }
         .ledger-action-sell { color: var(--red); font-weight: 600; }
+        .dir-badge {
+            display: inline-block;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 1px 5px;
+            border-radius: 3px;
+            margin-left: 4px;
+            letter-spacing: 0.3px;
+        }
+        .dir-badge.long { background: rgba(34,197,94,0.15); color: var(--green); }
+        .dir-badge.short { background: rgba(239,68,68,0.15); color: var(--red); }
 
         /* ── Anomaly panel ───────────────────────────────────────────── */
         .anomaly-badge {
@@ -2920,21 +2931,28 @@
                 </div>
             `;
 
-            // Per-position table
-            const openPositions = pnl.positions.filter(p => p.open_quantity > 0);
+            // Per-position table — include any non-zero signed quantity
+            const openPositions = pnl.positions.filter(p => Math.abs(p.open_quantity || 0) > 1e-9);
             if (openPositions.length > 0) {
                 posCard.style.display = 'block';
                 const tbody = document.getElementById('pnl-positions-body');
-                tbody.innerHTML = pnl.positions.map(pos => {
+                tbody.innerHTML = pnl.positions.filter(p => Math.abs(p.open_quantity || 0) > 1e-9).map(pos => {
                     const label = pos.option_label || pos.ticker;
+                    const dirBadge = pos.option_direction
+                        ? `<span class="dir-badge ${pos.option_direction.toLowerCase()}">${pos.option_direction}</span>`
+                        : (pos.open_quantity < 0 ? '<span class="dir-badge short">SHORT</span>' : '');
+                    const qty = pos.open_quantity;
+                    const qtyStr = qty < 0
+                        ? `<span style="color:var(--red)">${qty}</span>`
+                        : qty;
                     const unrealizedClass = pnlClass(pos.unrealized_pl_display);
                     const realizedClass = pnlClass(pos.realized_pl_display);
                     const pctStr = pos.unrealized_pl_pct !== null && pos.unrealized_pl_pct !== undefined
                         ? `${pos.unrealized_pl_pct >= 0 ? '+' : ''}${pos.unrealized_pl_pct.toFixed(1)}%` : '—';
                     return `<tr>
-                        <td style="font-weight:600;font-family:'SF Mono',monospace">${label}</td>
-                        <td>${pos.open_quantity > 0 ? pos.open_quantity : '<span style="color:var(--text-muted)">Closed</span>'}</td>
-                        <td>${pos.avg_cost_basis > 0 ? pos.avg_cost_basis.toFixed(4) : '—'}</td>
+                        <td style="font-weight:600;font-family:'SF Mono',monospace">${label}${dirBadge}</td>
+                        <td>${qtyStr}</td>
+                        <td>${pos.avg_cost_basis !== 0 ? pos.avg_cost_basis.toFixed(4) : '—'}</td>
                         <td>${pos.current_price !== null ? pos.current_price : '—'}</td>
                         <td>${pos.current_value_display !== null ? currencySymbol(c) + pos.current_value_display.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '—'}</td>
                         <td class="${unrealizedClass}">${fmtPnl(pos.unrealized_pl_display, c)}</td>
