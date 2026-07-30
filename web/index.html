@@ -1336,6 +1336,7 @@
                     <button class="acct-tab-add" onclick="openAccountModal()" title="Add account">+</button>
                     <button class="btn" style="margin-left:8px;padding:5px 11px;font-size:12px;align-self:center;white-space:nowrap" onclick="openImportModal()" title="Import CSV">⇪ Import</button>
                     <button class="btn" id="scan-anomalies-btn" style="margin-left:4px;padding:5px 11px;font-size:12px;align-self:center;white-space:nowrap" onclick="scanAnomalies()" title="Scan for ledger anomalies">⚠ Scan</button>
+                    <button class="btn btn-danger" style="margin-left:4px;padding:5px 11px;font-size:12px;align-self:center;white-space:nowrap" onclick="clearAllAccounts()" title="Delete all accounts and transactions for this profile">Clear ledger</button>
                 </div>
 
                 <!-- Anomalies panel (shown after scan) -->
@@ -3295,6 +3296,39 @@
             }
         }
 
+        async function clearAllAccounts() {
+            if (!currentProfile) return;
+            const n = (currentAccounts || []).length;
+            if (n === 0) {
+                showToast('No accounts to clear', 'error');
+                return;
+            }
+            const ok = confirm(
+                `Delete ALL ${n} account(s) and every transaction in profile "${currentProfile.name}"?\n\nThis cannot be undone.`
+            );
+            if (!ok) return;
+            const ok2 = confirm(`Final confirmation: clear the entire ledger for "${currentProfile.name}"?`);
+            if (!ok2) return;
+            try {
+                const res = await apiFetch(
+                    apiUrl('/api/accounts', 'confirm=delete'),
+                    { method: 'DELETE' }
+                );
+                if (res.ok) {
+                    const data = await res.json();
+                    currentAccountId = null;
+                    showToast(`Cleared ${data.deleted_account_ids?.length || 0} accounts`);
+                    await loadAccounts();
+                    loadPositions();
+                } else {
+                    const err = await res.json();
+                    showToast(err.detail || 'Failed to clear accounts', 'error');
+                }
+            } catch (e) {
+                showToast('Network error', 'error');
+            }
+        }
+
         // ── Drag-to-reorder account tabs ────────────────────────────────
 
         let dragSrcId = null;
@@ -3453,7 +3487,10 @@
         }
 
         function _importDefaultValue(ap) {
-            if (ap.matched_account_id) return 'existing:' + ap.matched_account_id;
+            if (ap.matched_account_id) {
+                const known = (currentAccounts || []).some(a => a.id === ap.matched_account_id);
+                if (known) return 'existing:' + ap.matched_account_id;
+            }
             return 'new:' + (ap.account_type || ap.source_account_id);
         }
 
@@ -3560,10 +3597,21 @@
                 // Preserve anomaly block if present — only refresh the count cards
                 const anomalyHtml = summary.querySelector('[data-import-anomalies]')?.outerHTML || '';
                 const profileLine = data.profile
-                    ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Server checked profile <code>${escHtml(data.profile)}</code> · new ${data.total_new} · dups ${data.total_duplicates}</div>`
+                    ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Server checked profile <code>${escHtml(data.profile)}</code> · accounts in profile ${(currentAccounts || []).length} · new ${data.total_new} · dups ${data.total_duplicates} · skipped ${data.total_skipped}</div>`
                     : '';
+                let skipLine = '';
+                if (data.total_skipped > 0 && data.skip_reasons) {
+                    const parts = Object.entries(data.skip_reasons)
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, 5)
+                        .map(([reason, n]) => `${n}× ${reason}`);
+                    skipLine = `<div style="font-size:12px;color:#d97706;margin-bottom:8px">Skipped rows: ${escHtml(parts.join('; '))}</div>`;
+                }
+                if (data.total_new === 0 && data.total_duplicates === 0 && (data.columns_detected || []).length) {
+                    skipLine += `<div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">CSV columns: <code>${escHtml((data.columns_detected || []).join(', '))}</code></div>`;
+                }
                 summary.innerHTML = `
-                    ${profileLine}
+                    ${profileLine}${skipLine}
                     <div class="pnl-cards" style="margin-bottom:0">
                         <div class="pnl-card"><div class="pnl-label">Total rows</div><div class="pnl-value pnl-neutral">${data.total_rows}</div></div>
                         <div class="pnl-card"><div class="pnl-label">New trades</div><div class="pnl-value ${data.total_new > 0 ? 'pnl-positive' : 'pnl-neutral'}">${data.total_new}</div></div>

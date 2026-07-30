@@ -36,6 +36,18 @@ class TestParseTradeRow:
         row["activity_type"] = "Dividend"
         assert _parse_trade_row(row) is None
 
+    def test_activity_type_case_insensitive(self):
+        row = parse_csv(SAMPLE_CSV)[0]
+        row["activity_type"] = "trade"
+        assert _parse_trade_row(row) is not None
+
+    def test_activity_type_as_buy(self):
+        row = parse_csv(SAMPLE_CSV)[0]
+        row["activity_type"] = "Buy"
+        row["activity_sub_type"] = ""
+        assert _parse_trade_row(row) is not None
+        assert _parse_trade_row(row).action == "buy"
+
 
 class TestPreviewDedup:
     def test_empty_profile_imports_all(self):

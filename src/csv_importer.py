@@ -24,9 +24,11 @@ from .models import Account, TransactionRecord
 
 logger = logging.getLogger(__name__)
 
-# Only these activity types are imported as transactions
-_IMPORTABLE_ACTIVITY_TYPES = {"Trade"}
+# Only these activity types are imported as transactions (compared case-insensitively)
+_IMPORTABLE_ACTIVITY_TYPES = {"trade"}
 _IMPORTABLE_SUB_TYPES = {"BUY", "SELL"}
+# Also accept rows where the sub-type is stuffed into activity_type (some exports)
+_IMPORTABLE_ACTIVITY_AS_SUB = {"buy", "sell"}
 
 # OCC option symbol: up to 6-char root (space-padded) + YYMMDD + C/P + 8-digit strike*1000
 # e.g. "IBIT  250919C00062000"
@@ -147,10 +149,18 @@ def _parse_trade_row(row: dict) -> Optional[TransactionRecord]:
 
     Returns None if the row is not a Trade BUY/SELL or lacks required fields.
     """
-    if _safe_str(row.get("activity_type")) not in _IMPORTABLE_ACTIVITY_TYPES:
-        return None
+    activity = _safe_str(row.get("activity_type"))
+    activity_l = activity.lower()
     sub_type = _safe_str(row.get("activity_sub_type")).upper()
-    if sub_type not in _IMPORTABLE_SUB_TYPES:
+
+    # Standard Wealthsimple: activity_type=Trade, activity_sub_type=BUY/SELL
+    if activity_l in _IMPORTABLE_ACTIVITY_TYPES:
+        if sub_type not in _IMPORTABLE_SUB_TYPES:
+            return None
+    # Alternate: activity_type itself is Buy/Sell
+    elif activity_l in _IMPORTABLE_ACTIVITY_AS_SUB:
+        sub_type = activity_l.upper()
+    else:
         return None
 
     tx_date_str = _safe_str(row.get("transaction_date"))
@@ -159,7 +169,8 @@ def _parse_trade_row(row: dict) -> Optional[TransactionRecord]:
         return None
 
     try:
-        tx_date = date.fromisoformat(tx_date_str)
+        # Accept date or datetime strings
+        tx_date = date.fromisoformat(tx_date_str[:10])
     except ValueError:
         logger.warning(f"Bad date in CSV row: {tx_date_str!r}")
         return None
@@ -212,6 +223,30 @@ def _parse_trade_row(row: dict) -> Optional[TransactionRecord]:
             notes=notes,
             external_id=external_id,
         )
+
+
+def explain_skip(row: dict) -> str:
+    """Human-readable reason a CSV row would not import as a trade."""
+    activity = _safe_str(row.get("activity_type"))
+    sub = _safe_str(row.get("activity_sub_type"))
+    if not activity and not sub:
+        return "missing activity_type"
+    activity_l = activity.lower()
+    if activity_l not in _IMPORTABLE_ACTIVITY_TYPES and activity_l not in _IMPORTABLE_ACTIVITY_AS_SUB:
+        return f"activity_type={activity!r} (need Trade)"
+    if activity_l in _IMPORTABLE_ACTIVITY_TYPES and sub.upper() not in _IMPORTABLE_SUB_TYPES:
+        return f"activity_sub_type={sub!r} (need BUY/SELL)"
+    if not _safe_str(row.get("transaction_date")):
+        return "missing transaction_date"
+    if not _safe_str(row.get("symbol")):
+        return "missing symbol"
+    try:
+        date.fromisoformat(_safe_str(row.get("transaction_date"))[:10])
+    except ValueError:
+        return f"bad date={row.get('transaction_date')!r}"
+    if abs(_safe_float(row.get("quantity"))) <= 0:
+        return "quantity <= 0"
+    return "unparseable"
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -292,6 +327,7 @@ def preview_import(
     total_dups = 0
     total_skipped = 0
     new_txs_by_account: dict[str, list[TransactionRecord]] = {}
+    skip_reasons: dict[str, int] = {}
 
     for src_id, grp in groups.items():
         matched = _resolve_preview_destination(
@@ -310,6 +346,8 @@ def preview_import(
             tx = _parse_trade_row(row)
             if tx is None:
                 skip_count += 1
+                reason = explain_skip(row)
+                skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
                 continue
 
             # Dedup only against the destination account in this profile.
@@ -357,12 +395,16 @@ def preview_import(
         for a in combined_result.anomalies:
             import_anomalies.append(a.model_dump(mode="json"))
 
+    columns = list(rows[0].keys()) if rows else []
+
     return {
         "account_previews": account_previews,
         "total_rows": len(rows),
         "total_new": total_new,
         "total_duplicates": total_dups,
         "total_skipped": total_skipped,
+        "skip_reasons": skip_reasons,
+        "columns_detected": columns,
         "anomalies": import_anomalies,
         "anomaly_count": len(import_anomalies),
         # Expose per-account dedup keys so the UI can recompute when mapping changes.

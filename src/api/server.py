@@ -984,6 +984,37 @@ async def delete_account_endpoint(
     return {"status": "deleted", "id": account_id}
 
 
+@app.delete("/api/accounts")
+async def clear_all_accounts_endpoint(
+    profile: str | None = None,
+    confirm: str | None = None,
+    user: dict = Depends(require_auth),
+):
+    """Delete ALL accounts and ledgers for a profile.
+
+    Requires ``confirm=delete`` query param to avoid accidents.
+    """
+    if not profile:
+        raise HTTPException(status_code=400, detail="profile parameter is required")
+    if confirm != "delete":
+        raise HTTPException(
+            status_code=400,
+            detail="Pass confirm=delete to clear all accounts for this profile",
+        )
+    accts = load_accounts(profile)
+    deleted = []
+    for acct in list(accts.accounts):
+        if delete_account(profile, acct.id):
+            deleted.append(acct.id)
+    logger.warning(
+        "Cleared %d accounts for profile %r (user=%s)",
+        len(deleted),
+        profile,
+        user.get("sub") or user.get("username") or user,
+    )
+    return {"status": "cleared", "profile": profile, "deleted_account_ids": deleted}
+
+
 @app.post("/api/accounts/reorder")
 async def reorder_accounts_endpoint(
     body: AccountsReorder,
