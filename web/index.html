@@ -3327,7 +3327,7 @@
             document.getElementById('import-step-done').style.display = 'none';
             const label = document.getElementById('import-profile-label');
             if (label) {
-                label.textContent = `Importing into profile: ${currentProfile.name} (${currentProfile.id})`;
+                label.innerHTML = `Importing into profile: <strong style="color:var(--accent)">${escHtml(currentProfile.name)}</strong> <span style="opacity:0.7">(${escHtml(currentProfile.id)})</span>`;
             }
             document.getElementById('import-modal').classList.add('open');
             // Ensure mapping dropdowns use this profile's accounts only
@@ -3501,7 +3501,11 @@
             if (summary) {
                 // Preserve anomaly block if present — only refresh the count cards
                 const anomalyHtml = summary.querySelector('[data-import-anomalies]')?.outerHTML || '';
+                const profileLine = data.profile
+                    ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Server checked profile <code>${escHtml(data.profile)}</code> · new ${data.total_new} · dups ${data.total_duplicates}</div>`
+                    : '';
                 summary.innerHTML = `
+                    ${profileLine}
                     <div class="pnl-cards" style="margin-bottom:0">
                         <div class="pnl-card"><div class="pnl-label">Total rows</div><div class="pnl-value pnl-neutral">${data.total_rows}</div></div>
                         <div class="pnl-card"><div class="pnl-label">New trades</div><div class="pnl-value ${data.total_new > 0 ? 'pnl-positive' : 'pnl-neutral'}">${data.total_new}</div></div>

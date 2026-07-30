@@ -1066,6 +1066,14 @@ async def import_preview_endpoint(
         raise HTTPException(status_code=422, detail=f"Failed to parse CSV: {e}")
 
     result["profile"] = profile
+    logger.info(
+        "Import preview profile=%r accounts=%d new=%d dups=%d skipped=%d",
+        profile,
+        len(accts.accounts),
+        result.get("total_new", 0),
+        result.get("total_duplicates", 0),
+        result.get("total_skipped", 0),
+    )
     return result
 
 
