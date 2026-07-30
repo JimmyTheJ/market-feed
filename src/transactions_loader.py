@@ -123,6 +123,8 @@ def save_transactions(
             entry["notes"] = tx.notes
         if tx.external_id:
             entry["external_id"] = tx.external_id
+        if tx.import_batch_id:
+            entry["import_batch_id"] = tx.import_batch_id
         tx_list.append(entry)
 
     with open(path, "w") as f:
@@ -146,3 +148,68 @@ def load_all_profile_transactions(profile: str | None = None) -> TransactionsFil
         except Exception:
             pass
     return load_transactions(profile=profile)
+
+
+def bulk_delete_transactions(
+    ids: set[str],
+    profile: str | None = None,
+    account_id: str | None = None,
+) -> int:
+    """Remove transactions whose IDs are in *ids* from one ledger file.
+
+    Returns the number of transactions removed.
+    """
+    if not ids:
+        return 0
+    txs = load_transactions(profile=profile, account_id=account_id)
+    before = len(txs.transactions)
+    txs.transactions = [t for t in txs.transactions if t.id not in ids]
+    removed = before - len(txs.transactions)
+    if removed:
+        save_transactions(txs, profile=profile, account_id=account_id)
+    return removed
+
+
+def rollback_import_batch(profile: str, batch_id: str) -> dict:
+    """Remove all transactions tagged with *batch_id* across a profile.
+
+    Scans every account ledger plus the legacy profile-root transactions file.
+    Returns a summary with deleted count and touched account IDs.
+    """
+    deleted = 0
+    accounts_touched: list[str] = []
+
+    try:
+        from .accounts_manager import get_account_transactions_path, load_accounts
+
+        accts = load_accounts(profile)
+        for acct in accts.accounts:
+            tx_path = get_account_transactions_path(profile, acct.id)
+            txs_file = load_transactions(path=tx_path)
+            before = len(txs_file.transactions)
+            txs_file.transactions = [
+                t for t in txs_file.transactions if t.import_batch_id != batch_id
+            ]
+            removed = before - len(txs_file.transactions)
+            if removed:
+                save_transactions(txs_file, path=tx_path)
+                deleted += removed
+                accounts_touched.append(acct.id)
+    except Exception:
+        pass
+
+    legacy = load_transactions(profile=profile)
+    before = len(legacy.transactions)
+    legacy.transactions = [
+        t for t in legacy.transactions if t.import_batch_id != batch_id
+    ]
+    removed = before - len(legacy.transactions)
+    if removed:
+        save_transactions(legacy, profile=profile)
+        deleted += removed
+
+    return {
+        "deleted": deleted,
+        "accounts_touched": accounts_touched,
+        "batch_id": batch_id,
+    }

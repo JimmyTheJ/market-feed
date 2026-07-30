@@ -248,6 +248,7 @@ class TransactionRecord(BaseModel):
     lot_id: Optional[str] = None  # for specific-lot sells, references the buy tx id
     notes: str = ""
     external_id: Optional[str] = None  # dedup key from CSV import (hash of source row)
+    import_batch_id: Optional[str] = None  # groups rows from a single CSV import for rollback
 
     @field_validator("ticker")
     @classmethod
