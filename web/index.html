@@ -1313,6 +1313,10 @@
 
         <!-- Ledger Tab -->
         <div class="tab-content" id="tab-ledger">
+            <div id="ledger-loading" class="loading" style="display:none">
+                <span class="spinner"></span> Loading...
+            </div>
+
             <!-- Empty state: no accounts yet -->
             <div id="ledger-empty" class="card" style="text-align:center;padding:56px 24px;display:none">
                 <div style="font-size:48px;margin-bottom:12px;opacity:0.3">🏦</div>
@@ -1661,6 +1665,7 @@
             currentTransactions = [];
             currentPnl = null;
             lastAnomalyScan = null;
+            showLedgerLoading();
             const card = document.getElementById('anomalies-card');
             if (card) card.style.display = 'none';
             // Don't carry an in-progress import preview across profiles
@@ -2851,14 +2856,50 @@
             }
         }
 
+        function showLedgerLoading() {
+            const empty = document.getElementById('ledger-empty');
+            const acctView = document.getElementById('ledger-accounts');
+            const loading = document.getElementById('ledger-loading');
+            if (empty) empty.style.display = 'none';
+            if (acctView) acctView.style.display = 'none';
+            if (loading) loading.style.display = 'block';
+        }
+
+        function hideLedgerLoading() {
+            const loading = document.getElementById('ledger-loading');
+            if (loading) loading.style.display = 'none';
+        }
+
+        function showPnlLoading() {
+            const cards = document.getElementById('pnl-summary-cards');
+            const posCard = document.getElementById('pnl-positions-card');
+            if (cards) cards.innerHTML = '<div class="loading" style="padding:20px"><span class="spinner"></span> Loading...</div>';
+            if (posCard) posCard.style.display = 'none';
+        }
+
+        function showTxLoading() {
+            const tbody = document.getElementById('tx-table-body');
+            if (tbody) tbody.innerHTML = '<tr><td colspan="10" class="loading" style="padding:20px"><span class="spinner"></span> Loading...</td></tr>';
+        }
+
+        function showLedgerAccountLoading() {
+            showPnlLoading();
+            showTxLoading();
+        }
+
         async function loadTransactions() {
+            const profileId = currentProfile?.id;
+            const accountId = currentAccountId;
+            showTxLoading();
             try {
                 const acctParam = currentAccountId ? `account_id=${encodeURIComponent(currentAccountId)}` : '';
                 const res = await apiFetch(apiUrl('/api/transactions', acctParam));
                 const data = await res.json();
+                if (!currentProfile || currentProfile.id !== profileId || currentAccountId !== accountId) return;
                 currentTransactions = data.transactions || [];
                 renderTransactions();
             } catch (e) {
+                if (!currentProfile || currentProfile.id !== profileId || currentAccountId !== accountId) return;
                 document.getElementById('tx-table-body').innerHTML =
                     '<tr><td colspan="10" style="color:var(--red);text-align:center;padding:16px">Failed to load transactions</td></tr>';
             }
@@ -2901,15 +2942,20 @@
         }
 
         async function loadPnl() {
+            const profileId = currentProfile?.id;
+            const accountId = currentAccountId;
             const currSel = document.getElementById('pnl-currency');
             const dispCurrency = currSel?.value || displayCurrency || 'USD';
             const acctParam = currentAccountId ? `account_id=${encodeURIComponent(currentAccountId)}&display_currency=${dispCurrency}` : `display_currency=${dispCurrency}`;
+            showPnlLoading();
             try {
                 const res = await apiFetch(apiUrl('/api/pnl', acctParam));
                 const data = await res.json();
+                if (!currentProfile || currentProfile.id !== profileId || currentAccountId !== accountId) return;
                 currentPnl = data.pnl;
                 renderPnl(currentPnl);
             } catch (e) {
+                if (!currentProfile || currentProfile.id !== profileId || currentAccountId !== accountId) return;
                 document.getElementById('pnl-summary-cards').innerHTML =
                     '<div style="color:var(--red)">Failed to load P&L data</div>';
             }
@@ -3002,6 +3048,7 @@
 
         async function loadAccounts() {
             if (!currentProfile) return;
+            showLedgerLoading();
             const gen = ++_accountsLoadGen;
             const profileId = currentProfile.id;
             try {
@@ -3021,6 +3068,7 @@
 
             const empty = document.getElementById('ledger-empty');
             const acctView = document.getElementById('ledger-accounts');
+            hideLedgerLoading();
 
             if (currentAccounts.length === 0) {
                 empty.style.display = 'block';
@@ -3034,6 +3082,7 @@
                     currentAccountId = currentAccounts[0].id;
                 }
                 renderAccountTabs();
+                showLedgerAccountLoading();
                 loadTransactions();
                 loadPnl();
             }
@@ -3059,6 +3108,7 @@
         function switchAccount(id) {
             currentAccountId = id;
             renderAccountTabs();
+            showLedgerAccountLoading();
             loadTransactions();
             loadPnl();
             // Hide anomalies panel when switching accounts (user can re-scan)
