@@ -3453,6 +3453,7 @@
             const data = _importPreviewData;
             if (!data) return;
             const extByAcct = data.account_external_ids || {};
+            const fpByAcct = data.account_fingerprints || {};
             let totalNew = 0;
             let totalDups = 0;
             let totalSkipped = 0;
@@ -3460,13 +3461,20 @@
             for (const ap of data.account_previews) {
                 const dest = _importMapping[ap.source_account_id] || '';
                 let existingIds = new Set();
+                let existingFps = new Set();
                 if (dest.startsWith('existing:')) {
-                    existingIds = new Set(extByAcct[dest.slice(9)] || []);
+                    const acctId = dest.slice(9);
+                    existingIds = new Set(extByAcct[acctId] || []);
+                    existingFps = new Set(fpByAcct[acctId] || []);
                 }
                 let newCount = 0, dupCount = 0, skipCount = ap.skipped_count || 0;
                 for (const tp of (ap.transactions || [])) {
                     const ext = tp.transaction?.external_id;
-                    if (dest.startsWith('existing:') && ext && existingIds.has(ext)) {
+                    const fp = tp.fingerprint;
+                    const isDup = dest.startsWith('existing:') && (
+                        (ext && existingIds.has(ext)) || (fp && existingFps.has(fp))
+                    );
+                    if (isDup) {
                         dupCount += 1;
                         tp.is_duplicate = true;
                     } else {
@@ -3521,6 +3529,8 @@
                     confirmBtn.textContent = `Import ${data.total_new} transactions`;
                 } else if (data.total_duplicates > 0) {
                     confirmBtn.textContent = 'Nothing to import (all duplicates in this profile)';
+                } else if (data.total_skipped > 0) {
+                    confirmBtn.textContent = 'Nothing to import (no Trade BUY/SELL rows)';
                 } else {
                     confirmBtn.textContent = 'Nothing to import';
                 }

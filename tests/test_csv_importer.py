@@ -52,6 +52,20 @@ class TestPreviewDedup:
         assert result["total_new"] == 0
         assert result["total_duplicates"] == 2
 
+    def test_fingerprint_dedup_without_external_id(self):
+        """Legacy ledgers saved before external_id was persisted must still dedupe."""
+        rows = parse_csv(SAMPLE_CSV)
+        txs = [_tx_from_row(r) for r in rows]
+        for t in txs:
+            t.external_id = None  # simulate pre-fix ledger rows
+        # Match by account name (no source_account_id on legacy accounts)
+        acct = Account(id="acctA", name="TFSA")
+
+        result = preview_import(SAMPLE_CSV, [acct], {"acctA": txs})
+        assert result["total_new"] == 0
+        assert result["total_duplicates"] == 2
+        assert result["account_fingerprints"]["acctA"]
+
     def test_other_profile_data_does_not_block(self):
         """Transactions that exist only in another profile's data must not
         affect preview for an empty (or different) profile.

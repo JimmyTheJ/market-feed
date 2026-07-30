@@ -61,7 +61,16 @@ from ..accounts_manager import (
     save_accounts,
 )
 from ..anomaly_detector import detect_anomalies, detect_profile_anomalies
-from ..csv_importer import preview_import, parse_csv, group_rows_by_account, _parse_trade_row, _generate_external_id
+from ..csv_importer import (
+    preview_import,
+    parse_csv,
+    group_rows_by_account,
+    _parse_trade_row,
+    _generate_external_id,
+    build_dedup_indexes,
+    is_duplicate_transaction,
+    transaction_fingerprint,
+)
 from ..transactions_loader import load_all_profile_transactions, load_transactions, save_transactions
 
 load_dotenv()
@@ -1125,6 +1134,9 @@ async def import_confirm_endpoint(
     src_id_to_existing: dict[str, "Account"] = {
         a.source_account_id: a for a in accts.accounts if a.source_account_id
     }
+    name_to_existing: dict[str, "Account"] = {
+        a.name.strip().lower(): a for a in accts.accounts if a.name
+    }
 
     # ── Phase 1: determine which new account labels to create ─────────────
     # Use an ordered dict to preserve insertion order (Python 3.7+).
@@ -1140,10 +1152,15 @@ async def import_confirm_endpoint(
                 labels_to_create.setdefault(label, None)
                 label_sources.setdefault(label, []).append(src_id)
         else:
-            if src_id not in src_id_to_existing:
-                label = grp["account_type"] or src_id
-                labels_to_create.setdefault(label, None)
-                label_sources.setdefault(label, []).append(src_id)
+            # Auto-map: source_account_id, then legacy name/type match
+            if src_id in src_id_to_existing:
+                continue
+            type_name = (grp.get("account_type") or "").strip().lower()
+            if type_name and type_name in name_to_existing:
+                continue
+            label = grp["account_type"] or src_id
+            labels_to_create.setdefault(label, None)
+            label_sources.setdefault(label, []).append(src_id)
 
     # ── Phase 2: create one account per unique label ───────────────────────
     existing_names = {a.name for a in accts.accounts}
@@ -1207,6 +1224,10 @@ async def import_confirm_endpoint(
                 resolved[src_id] = None
         else:
             matched = src_id_to_existing.get(src_id)
+            if not matched:
+                type_name = (grp.get("account_type") or "").strip().lower()
+                if type_name:
+                    matched = name_to_existing.get(type_name)
             if matched:
                 resolved[src_id] = matched
             else:
@@ -1227,21 +1248,30 @@ async def import_confirm_endpoint(
     if accounts_dirty:
         save_accounts(accts, profile)
 
-    # ── Phase 4: import transactions, deduplicating by external_id ─────────
-    # Load existing transaction files once and share ext_id sets across
-    # source accounts that map to the same destination (handles within-import
-    # dedup when merging multiple source accounts).
+    # ── Phase 4: import transactions, deduplicating within this profile ────
+    # Match by external_id when present, otherwise by content fingerprint so
+    # ledgers saved before external_id was persisted still dedupe correctly.
     from ..transactions_loader import TransactionsFile as _TxFile
 
     tx_files: dict[str, "_TxFile"] = {}
     ext_id_sets: dict[str, set[str]] = {}
+    fingerprint_sets: dict[str, set[str]] = {}
+    # existing tx index for backfilling external_id onto legacy rows
+    txs_by_fingerprint: dict[str, dict[str, object]] = {}
     new_txs_by_acct: dict[str, list] = {}
+    backfill_dirty: set[str] = set()
 
     for acct in accts.accounts:
         tx_path = get_account_transactions_path(profile, acct.id)
         txs_file = load_transactions(path=tx_path)
         tx_files[acct.id] = txs_file
-        ext_id_sets[acct.id] = {t.external_id for t in txs_file.transactions if t.external_id}
+        ext_ids, fps = build_dedup_indexes(txs_file.transactions)
+        ext_id_sets[acct.id] = ext_ids
+        fingerprint_sets[acct.id] = fps
+        fp_index: dict[str, object] = {}
+        for t in txs_file.transactions:
+            fp_index[transaction_fingerprint(t)] = t
+        txs_by_fingerprint[acct.id] = fp_index
 
     transactions_imported = 0
     transactions_skipped = 0
@@ -1253,6 +1283,8 @@ async def import_confirm_endpoint(
             continue
 
         ext_ids = ext_id_sets.setdefault(matched.id, set())
+        fps = fingerprint_sets.setdefault(matched.id, set())
+        fp_index = txs_by_fingerprint.setdefault(matched.id, {})
         bucket = new_txs_by_acct.setdefault(matched.id, [])
 
         for row in grp["rows"]:
@@ -1260,28 +1292,53 @@ async def import_confirm_endpoint(
             if tx is None:
                 transactions_skipped += 1
                 continue
-            if tx.external_id and tx.external_id in ext_ids:
+            if is_duplicate_transaction(tx, ext_ids, fps):
                 transactions_skipped += 1
+                # Backfill external_id onto legacy rows matched by fingerprint
+                if tx.external_id:
+                    existing = fp_index.get(transaction_fingerprint(tx))
+                    if existing is not None and not getattr(existing, "external_id", None):
+                        existing.external_id = tx.external_id
+                        backfill_dirty.add(matched.id)
+                        ext_ids.add(tx.external_id)
                 continue
             bucket.append(tx)
             if tx.external_id:
                 ext_ids.add(tx.external_id)
+            fp = transaction_fingerprint(tx)
+            fps.add(fp)
+            fp_index[fp] = tx
 
     for acct_id, new_txs in new_txs_by_acct.items():
-        if not new_txs:
-            continue
         txs_file = tx_files.get(acct_id)
-        combined = (txs_file.transactions if txs_file else []) + new_txs
+        existing_list = list(txs_file.transactions) if txs_file else []
+        if not new_txs and acct_id not in backfill_dirty:
+            continue
+        combined = existing_list + new_txs
         combined.sort(key=lambda t: t.date)
         tx_path = get_account_transactions_path(profile, acct_id)
         save_transactions(_TxFile(transactions=combined), path=tx_path)
         transactions_imported += len(new_txs)
         acct = acct_by_id.get(acct_id)
-        if acct:
+        if acct and new_txs:
             logger.info(
                 f"Imported {len(new_txs)} transactions into {acct.name!r} "
                 f"for profile {profile!r}"
             )
+
+    # Persist external_id backfills even when no new rows were added
+    for acct_id in backfill_dirty:
+        if new_txs_by_acct.get(acct_id):
+            continue  # already saved above
+        txs_file = tx_files.get(acct_id)
+        if not txs_file:
+            continue
+        tx_path = get_account_transactions_path(profile, acct_id)
+        save_transactions(txs_file, path=tx_path)
+        logger.info(
+            f"Backfilled external_id on legacy transactions for account {acct_id} "
+            f"in profile {profile!r}"
+        )
 
     return {
         "status": "ok",

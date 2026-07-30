@@ -81,6 +81,55 @@ def _generate_external_id(row: dict) -> str:
     return hashlib.sha256(key.encode()).hexdigest()[:20]
 
 
+def _fmt_num(val: float) -> str:
+    """Stable numeric formatting for fingerprints (avoid 10 vs 10.0 mismatches)."""
+    return f"{float(val):.8g}"
+
+
+def transaction_fingerprint(tx: TransactionRecord) -> str:
+    """Content fingerprint for dedup when external_id is missing on legacy rows.
+
+    Used only within a single profile/account — never across profiles.
+    """
+    tx_date = tx.date.isoformat() if hasattr(tx.date, "isoformat") else str(tx.date)
+    return "|".join([
+        tx_date,
+        (tx.ticker or "").upper(),
+        (tx.action or "").lower(),
+        _fmt_num(tx.quantity),
+        _fmt_num(tx.price),
+        tx.position_type or "equity",
+        tx.option_type or "",
+        tx.option_direction or "",
+        _fmt_num(tx.strike) if tx.strike is not None else "",
+        tx.expiration or "",
+    ])
+
+
+def build_dedup_indexes(
+    existing: list[TransactionRecord],
+) -> tuple[set[str], set[str]]:
+    """Build external_id and fingerprint sets for an account's existing ledger."""
+    ext_ids: set[str] = set()
+    fingerprints: set[str] = set()
+    for t in existing:
+        if t.external_id:
+            ext_ids.add(t.external_id)
+        fingerprints.add(transaction_fingerprint(t))
+    return ext_ids, fingerprints
+
+
+def is_duplicate_transaction(
+    tx: TransactionRecord,
+    ext_ids: set[str],
+    fingerprints: set[str],
+) -> bool:
+    """True if tx matches an existing row by external_id or content fingerprint."""
+    if tx.external_id and tx.external_id in ext_ids:
+        return True
+    return transaction_fingerprint(tx) in fingerprints
+
+
 def _safe_str(val) -> str:
     """Return a stripped string, safely handling None values from DictReader."""
     return (val or "").strip()
@@ -223,13 +272,20 @@ def preview_import(
         for a in existing_accounts
         if a.source_account_id
     }
+    # Legacy fallback: accounts imported before source_account_id was persisted
+    name_map: dict[str, Account] = {
+        a.name.strip().lower(): a for a in existing_accounts if a.name
+    }
     acct_by_id = {a.id: a for a in existing_accounts}
 
-    # Build external_id sets per account for deduplication (profile-local only)
+    # Build dedup indexes per account (profile-local only)
     ext_id_sets: dict[str, set[str]] = {}
+    fingerprint_sets: dict[str, set[str]] = {}
     for acct in existing_accounts:
         txs = existing_tx_by_account.get(acct.id, [])
-        ext_id_sets[acct.id] = {t.external_id for t in txs if t.external_id}
+        ext_ids, fps = build_dedup_indexes(txs)
+        ext_id_sets[acct.id] = ext_ids
+        fingerprint_sets[acct.id] = fps
 
     account_previews = []
     total_new = 0
@@ -239,10 +295,16 @@ def preview_import(
 
     for src_id, grp in groups.items():
         matched = _resolve_preview_destination(
-            src_id, grp, mapping, src_id_map, acct_by_id
+            src_id, grp, mapping, src_id_map, acct_by_id, name_map
         )
         tx_previews = []
         new_count = dup_count = skip_count = 0
+        ext_ids: set[str] = set()
+        fps: set[str] = set()
+        if matched:
+            # Copy so within-preview merges don't mutate the shared indexes
+            ext_ids = set(ext_id_sets.get(matched.id, set()))
+            fps = set(fingerprint_sets.get(matched.id, set()))
 
         for row in grp["rows"]:
             tx = _parse_trade_row(row)
@@ -250,13 +312,8 @@ def preview_import(
                 skip_count += 1
                 continue
 
-            # Deduplication check — only against the destination account in
-            # this profile. An empty / new destination never counts as a dup.
-            is_dup = False
-            if matched:
-                ext_ids = ext_id_sets.get(matched.id, set())
-                if tx.external_id and tx.external_id in ext_ids:
-                    is_dup = True
+            # Dedup only against the destination account in this profile.
+            is_dup = bool(matched) and is_duplicate_transaction(tx, ext_ids, fps)
 
             if is_dup:
                 dup_count += 1
@@ -264,10 +321,15 @@ def preview_import(
                 new_count += 1
                 if matched:
                     new_txs_by_account.setdefault(matched.id, []).append(tx)
+                    # Prevent within-preview double-counts when merging sources
+                    if tx.external_id:
+                        ext_ids.add(tx.external_id)
+                    fps.add(transaction_fingerprint(tx))
 
             tx_previews.append({
                 "transaction": _tx_to_dict(tx),
                 "is_duplicate": is_dup,
+                "fingerprint": transaction_fingerprint(tx),
             })
 
         account_previews.append({
@@ -303,11 +365,12 @@ def preview_import(
         "total_skipped": total_skipped,
         "anomalies": import_anomalies,
         "anomaly_count": len(import_anomalies),
-        # Expose per-account external_ids so the UI can recompute duplicate
-        # counts when the user changes the destination mapping, without
-        # re-uploading. Keys are account ids local to this profile only.
+        # Expose per-account dedup keys so the UI can recompute when mapping changes.
         "account_external_ids": {
             acct_id: sorted(ids) for acct_id, ids in ext_id_sets.items()
+        },
+        "account_fingerprints": {
+            acct_id: sorted(ids) for acct_id, ids in fingerprint_sets.items()
         },
     }
 
@@ -318,6 +381,7 @@ def _resolve_preview_destination(
     mapping: dict[str, dict] | None,
     src_id_map: dict[str, Account],
     acct_by_id: dict[str, Account],
+    name_map: dict[str, Account] | None = None,
 ) -> Account | None:
     """Resolve the destination account for preview dedup (profile-local)."""
     if mapping and src_id in mapping:
@@ -327,7 +391,15 @@ def _resolve_preview_destination(
             return acct_by_id.get(entry.get("account_id", ""))
         # "new" or unknown → no existing destination to dedup against
         return None
-    return src_id_map.get(src_id)
+    matched = src_id_map.get(src_id)
+    if matched:
+        return matched
+    # Legacy: match CSV account_type to an account name in this profile
+    if name_map:
+        type_name = (grp.get("account_type") or "").strip().lower()
+        if type_name:
+            return name_map.get(type_name)
+    return None
 
 
 def _tx_to_dict(tx: TransactionRecord) -> dict:
