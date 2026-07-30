@@ -19,7 +19,7 @@ from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -1008,10 +1008,22 @@ async def reorder_accounts_endpoint(
 # ── CSV Import endpoints ──────────────────────────────────────────────────────
 
 
+def _resolve_import_profile(
+    profile_query: str | None,
+    profile_form: str | None,
+) -> str:
+    """Resolve profile id from query string or multipart form field."""
+    profile = (profile_form or profile_query or "").strip()
+    if not profile:
+        raise HTTPException(status_code=400, detail="profile parameter is required")
+    return profile
+
+
 @app.post("/api/import/preview")
 async def import_preview_endpoint(
     file: UploadFile = File(...),
-    profile: str | None = None,
+    profile: str | None = Query(None),
+    profile_form: Optional[str] = Form(None, alias="profile"),
     mapping: Optional[str] = Form(None),
     user: dict = Depends(require_auth),
 ):
@@ -1026,8 +1038,7 @@ async def import_preview_endpoint(
     """
     import json as _json
 
-    if not profile:
-        raise HTTPException(status_code=400, detail="profile parameter is required")
+    profile = _resolve_import_profile(profile, profile_form)
 
     content = await file.read()
     accts = load_accounts(profile)
@@ -1054,13 +1065,15 @@ async def import_preview_endpoint(
         logger.warning(f"Import preview failed: {e}")
         raise HTTPException(status_code=422, detail=f"Failed to parse CSV: {e}")
 
+    result["profile"] = profile
     return result
 
 
 @app.post("/api/import/confirm")
 async def import_confirm_endpoint(
     file: UploadFile = File(...),
-    profile: str | None = None,
+    profile: str | None = Query(None),
+    profile_form: Optional[str] = Form(None, alias="profile"),
     mapping: Optional[str] = Form(None),
     user: dict = Depends(require_auth),
 ):
@@ -1079,12 +1092,12 @@ async def import_confirm_endpoint(
     endpoint falls back to automatic mapping (match by source_account_id,
     create one account per unique account_type).
 
-    Skips duplicate transactions (matched by external_id).
+    Skips duplicate transactions (matched by external_id) within the destination
+    account of this profile only.
     """
     import json as _json
 
-    if not profile:
-        raise HTTPException(status_code=400, detail="profile parameter is required")
+    profile = _resolve_import_profile(profile, profile_form)
 
     content = await file.read()
     try:
@@ -1168,7 +1181,17 @@ async def import_confirm_endpoint(
             entry = explicit_mapping[src_id]
             target = entry.get("target")
             if target == "existing":
-                resolved[src_id] = acct_by_id.get(entry.get("account_id", ""))
+                acct_id = entry.get("account_id", "")
+                dest = acct_by_id.get(acct_id)
+                if acct_id and dest is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Account '{acct_id}' was not found in profile '{profile}'. "
+                            "Choose an account that belongs to this profile, or create a new one."
+                        ),
+                    )
+                resolved[src_id] = dest
             elif target == "new":
                 label = entry.get("name") or grp["account_type"] or src_id
                 resolved[src_id] = new_label_map.get(label)

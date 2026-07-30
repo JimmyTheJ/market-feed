@@ -1425,12 +1425,13 @@
     <div class="modal-overlay" id="import-modal">
         <div class="modal-box" style="max-width:680px;width:95vw">
             <h3>Import from CSV</h3>
+            <p id="import-profile-label" style="color:var(--text-muted);font-size:12px;margin:-4px 0 12px"></p>
 
             <!-- Step 1: file picker -->
             <div id="import-step-pick">
                 <p style="color:var(--text-muted);font-size:13px;margin-bottom:16px">
                     Upload a brokerage activity export (Wealthsimple format). Only <strong>Trade</strong> rows are imported.
-                    Duplicate transactions are automatically skipped.
+                    Duplicates are skipped only within this profile's destination account — other profiles are unaffected.
                 </p>
                 <label style="display:block;border:2px dashed var(--border);border-radius:8px;padding:32px;text-align:center;cursor:pointer;transition:border-color 0.2s" id="import-drop-zone">
                     <input type="file" id="import-file-input" accept=".csv,text/csv" style="display:none" onchange="onImportFileChosen(this)">
@@ -2997,13 +2998,24 @@
 
         // ── Account management ──────────────────────────────────────────
 
+        let _accountsLoadGen = 0;  // ignore stale loadAccounts responses after profile switch
+
         async function loadAccounts() {
             if (!currentProfile) return;
+            const gen = ++_accountsLoadGen;
+            const profileId = currentProfile.id;
             try {
                 const res = await apiFetch(apiUrl('/api/accounts'));
                 const data = await res.json();
+                // Drop response if profile changed while request was in flight
+                if (gen !== _accountsLoadGen || !currentProfile || currentProfile.id !== profileId) {
+                    return;
+                }
                 currentAccounts = data.accounts || [];
             } catch (e) {
+                if (gen !== _accountsLoadGen || !currentProfile || currentProfile.id !== profileId) {
+                    return;
+                }
                 currentAccounts = [];
             }
 
@@ -3299,6 +3311,10 @@
         let _importCustomLabels = [];   // user-added destination names
 
         function openImportModal() {
+            if (!currentProfile) {
+                showToast('Select a profile first', 'error');
+                return;
+            }
             _importFile = null;
             _importPreviewData = null;
             _importMapping = {};
@@ -3309,6 +3325,10 @@
             document.getElementById('import-step-pick').style.display = 'block';
             document.getElementById('import-step-preview').style.display = 'none';
             document.getElementById('import-step-done').style.display = 'none';
+            const label = document.getElementById('import-profile-label');
+            if (label) {
+                label.textContent = `Importing into profile: ${currentProfile.name} (${currentProfile.id})`;
+            }
             document.getElementById('import-modal').classList.add('open');
             // Ensure mapping dropdowns use this profile's accounts only
             loadAccounts();
@@ -3346,12 +3366,19 @@
 
         async function runImportPreview() {
             if (!_importFile) return;
+            if (!currentProfile) {
+                showToast('Select a profile first', 'error');
+                return;
+            }
             const btn = document.getElementById('import-preview-btn');
             btn.disabled = true;
             btn.textContent = 'Analysing…';
             try {
+                // Wait for this profile's accounts so mapping options are correct
+                await loadAccounts();
                 const fd = new FormData();
                 fd.append('file', _importFile);
+                fd.append('profile', currentProfile.id);
                 const res = await apiFetch(apiUrl('/api/import/preview'), { method: 'POST', body: fd });
                 if (!res.ok) {
                     const err = await res.json();
@@ -3359,6 +3386,11 @@
                     return;
                 }
                 _importPreviewData = await res.json();
+                // Guard against stale responses if the user switched profiles mid-request
+                if (_importPreviewData.profile && _importPreviewData.profile !== currentProfile.id) {
+                    showToast('Profile changed during preview — try again', 'error');
+                    return;
+                }
                 renderImportPreview(_importPreviewData);
                 document.getElementById('import-step-pick').style.display = 'none';
                 document.getElementById('import-step-preview').style.display = 'block';
@@ -3481,9 +3513,13 @@
             const confirmBtn = document.getElementById('import-confirm-btn');
             if (confirmBtn) {
                 confirmBtn.disabled = data.total_new === 0;
-                confirmBtn.textContent = data.total_new > 0
-                    ? `Import ${data.total_new} transactions`
-                    : 'Nothing to import';
+                if (data.total_new > 0) {
+                    confirmBtn.textContent = `Import ${data.total_new} transactions`;
+                } else if (data.total_duplicates > 0) {
+                    confirmBtn.textContent = 'Nothing to import (all duplicates in this profile)';
+                } else {
+                    confirmBtn.textContent = 'Nothing to import';
+                }
             }
         }
 
@@ -3565,28 +3601,45 @@
 
         async function runImportConfirm() {
             if (!_importFile) return;
+            if (!currentProfile) {
+                showToast('Select a profile first', 'error');
+                return;
+            }
             const btn = document.getElementById('import-confirm-btn');
             btn.disabled = true;
             btn.textContent = 'Importing…';
             try {
+                await loadAccounts();
+                const validIds = new Set((currentAccounts || []).map(a => a.id));
                 // Build explicit mapping from current select state
                 const mapping = {};
                 for (const [srcId, val] of Object.entries(_importMapping)) {
                     if (val.startsWith('existing:')) {
-                        mapping[srcId] = { target: 'existing', account_id: val.slice(9) };
+                        const acctId = val.slice(9);
+                        if (!validIds.has(acctId)) {
+                            showToast(
+                                'Selected account is not in this profile. Choose Create New or an account listed for this profile.',
+                                'error'
+                            );
+                            btn.disabled = false;
+                            _recomputeImportCountsFromMapping();
+                            return;
+                        }
+                        mapping[srcId] = { target: 'existing', account_id: acctId };
                     } else if (val.startsWith('new:')) {
                         mapping[srcId] = { target: 'new', name: val.slice(4) };
                     }
                 }
                 const fd = new FormData();
                 fd.append('file', _importFile);
+                fd.append('profile', currentProfile.id);
                 fd.append('mapping', JSON.stringify(mapping));
                 const res = await apiFetch(apiUrl('/api/import/confirm'), { method: 'POST', body: fd });
                 if (!res.ok) {
                     const err = await res.json();
                     showToast(err.detail || 'Import failed', 'error');
                     btn.disabled = false;
-                    btn.textContent = 'Import';
+                    _recomputeImportCountsFromMapping();
                     return;
                 }
                 const data = await res.json();
@@ -3600,7 +3653,7 @@
             } catch (e) {
                 showToast('Network error during import', 'error');
                 btn.disabled = false;
-                btn.textContent = 'Import';
+                _recomputeImportCountsFromMapping();
             }
         }
 
