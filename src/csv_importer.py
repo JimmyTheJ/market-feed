@@ -197,13 +197,20 @@ def preview_import(
     csv_content: str | bytes,
     existing_accounts: list[Account],
     existing_tx_by_account: dict[str, list[TransactionRecord]],
+    mapping: dict[str, dict] | None = None,
 ) -> dict:
     """Analyse a CSV and return a preview of what would be imported.
+
+    Deduplication is scoped strictly to the destination account within the
+    provided profile data — never across profiles.
 
     Args:
         csv_content: raw CSV file content
         existing_accounts: current accounts for the profile
         existing_tx_by_account: dict of account_id → existing transactions
+        mapping: optional explicit routing (same shape as /api/import/confirm).
+            When provided, duplicate checks use the mapped destination account
+            rather than auto-matching by source_account_id alone.
 
     Returns a dict with full preview info for the UI.
     """
@@ -216,8 +223,9 @@ def preview_import(
         for a in existing_accounts
         if a.source_account_id
     }
+    acct_by_id = {a.id: a for a in existing_accounts}
 
-    # Build external_id sets per account for deduplication
+    # Build external_id sets per account for deduplication (profile-local only)
     ext_id_sets: dict[str, set[str]] = {}
     for acct in existing_accounts:
         txs = existing_tx_by_account.get(acct.id, [])
@@ -230,7 +238,9 @@ def preview_import(
     new_txs_by_account: dict[str, list[TransactionRecord]] = {}
 
     for src_id, grp in groups.items():
-        matched = src_id_map.get(src_id)
+        matched = _resolve_preview_destination(
+            src_id, grp, mapping, src_id_map, acct_by_id
+        )
         tx_previews = []
         new_count = dup_count = skip_count = 0
 
@@ -240,9 +250,9 @@ def preview_import(
                 skip_count += 1
                 continue
 
-            # Deduplication check
+            # Deduplication check — only against the destination account in
+            # this profile. An empty / new destination never counts as a dup.
             is_dup = False
-            dup_of = None
             if matched:
                 ext_ids = ext_id_sets.get(matched.id, set())
                 if tx.external_id and tx.external_id in ext_ids:
@@ -293,7 +303,31 @@ def preview_import(
         "total_skipped": total_skipped,
         "anomalies": import_anomalies,
         "anomaly_count": len(import_anomalies),
+        # Expose per-account external_ids so the UI can recompute duplicate
+        # counts when the user changes the destination mapping, without
+        # re-uploading. Keys are account ids local to this profile only.
+        "account_external_ids": {
+            acct_id: sorted(ids) for acct_id, ids in ext_id_sets.items()
+        },
     }
+
+
+def _resolve_preview_destination(
+    src_id: str,
+    grp: dict,
+    mapping: dict[str, dict] | None,
+    src_id_map: dict[str, Account],
+    acct_by_id: dict[str, Account],
+) -> Account | None:
+    """Resolve the destination account for preview dedup (profile-local)."""
+    if mapping and src_id in mapping:
+        entry = mapping[src_id]
+        target = entry.get("target")
+        if target == "existing":
+            return acct_by_id.get(entry.get("account_id", ""))
+        # "new" or unknown → no existing destination to dedup against
+        return None
+    return src_id_map.get(src_id)
 
 
 def _tx_to_dict(tx: TransactionRecord) -> dict:

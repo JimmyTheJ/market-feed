@@ -1012,28 +1012,44 @@ async def reorder_accounts_endpoint(
 async def import_preview_endpoint(
     file: UploadFile = File(...),
     profile: str | None = None,
+    mapping: Optional[str] = Form(None),
     user: dict = Depends(require_auth),
 ):
     """Parse a CSV export and return a preview of what would be imported.
 
     Returns account mapping (new vs existing), transaction counts,
     and duplicate analysis — without writing anything.
+
+    Deduplication is scoped to this profile only. An optional ``mapping``
+    form field (same JSON shape as /api/import/confirm) controls which
+    destination account each source is checked against.
     """
+    import json as _json
+
     if not profile:
         raise HTTPException(status_code=400, detail="profile parameter is required")
 
     content = await file.read()
     accts = load_accounts(profile)
 
-    # Build existing external_id sets per account for deduplication
+    # Load transactions for THIS profile only — never other profiles.
     existing_tx_by_account: dict[str, list] = {}
     for acct in accts.accounts:
         tx_path = get_account_transactions_path(profile, acct.id)
         txs_file = load_transactions(path=tx_path)
         existing_tx_by_account[acct.id] = txs_file.transactions
 
+    explicit_mapping: dict[str, dict] | None = None
+    if mapping:
+        try:
+            explicit_mapping = _json.loads(mapping)
+        except Exception:
+            raise HTTPException(status_code=422, detail="Invalid mapping JSON")
+
     try:
-        result = preview_import(content, accts.accounts, existing_tx_by_account)
+        result = preview_import(
+            content, accts.accounts, existing_tx_by_account, mapping=explicit_mapping
+        )
     except Exception as e:
         logger.warning(f"Import preview failed: {e}")
         raise HTTPException(status_code=422, detail=f"Failed to parse CSV: {e}")
@@ -1091,22 +1107,28 @@ async def import_confirm_endpoint(
 
     # ── Phase 1: determine which new account labels to create ─────────────
     # Use an ordered dict to preserve insertion order (Python 3.7+).
+    # Also track which source ids feed each new label so we can set
+    # source_account_id when a label has exactly one source.
     labels_to_create: dict[str, None] = {}
+    label_sources: dict[str, list[str]] = {}
     for src_id, grp in groups.items():
         if explicit_mapping and src_id in explicit_mapping:
             entry = explicit_mapping[src_id]
             if entry.get("target") == "new":
                 label = entry.get("name") or grp["account_type"] or src_id
                 labels_to_create.setdefault(label, None)
+                label_sources.setdefault(label, []).append(src_id)
         else:
             if src_id not in src_id_to_existing:
                 label = grp["account_type"] or src_id
                 labels_to_create.setdefault(label, None)
+                label_sources.setdefault(label, []).append(src_id)
 
     # ── Phase 2: create one account per unique label ───────────────────────
     existing_names = {a.name for a in accts.accounts}
     new_label_map: dict[str, "Account"] = {}
     accounts_created = 0
+    accounts_dirty = False
 
     from ..models import Account as _Account
 
@@ -1116,20 +1138,26 @@ async def import_confirm_endpoint(
         while name in existing_names:
             name = f"{label} {suffix}"
             suffix += 1
+        # Preserve brokerage source id for same-profile re-import matching
+        # when this new account is fed by exactly one CSV source account.
+        srcs = label_sources.get(label, [])
+        source_account_id = srcs[0] if len(srcs) == 1 else None
         new_acct = _Account(
             name=name,
             order=len(accts.accounts),
             currency="USD",
             description="Imported from CSV",
+            source_account_id=source_account_id,
         )
         accts.accounts.append(new_acct)
         new_label_map[label] = new_acct
         existing_names.add(name)
         accounts_created += 1
-        logger.info(f"Created account {name!r} for profile {profile!r}")
-
-    if accounts_created:
-        save_accounts(accts, profile)
+        accounts_dirty = True
+        logger.info(
+            f"Created account {name!r} (source: {source_account_id!r}) "
+            f"for profile {profile!r}"
+        )
 
     # ── Phase 3: resolve each source account to an internal account ────────
     acct_by_id = {a.id: a for a in accts.accounts}
@@ -1153,6 +1181,20 @@ async def import_confirm_endpoint(
             else:
                 label = grp["account_type"] or src_id
                 resolved[src_id] = new_label_map.get(label)
+
+    # Link source_account_id onto existing destinations that lack one, so
+    # future imports into this same profile can auto-match. Never reads or
+    # writes another profile's accounts.
+    for src_id, dest in resolved.items():
+        if dest is None:
+            continue
+        if not dest.source_account_id:
+            dest.source_account_id = src_id
+            accounts_dirty = True
+            src_id_to_existing[src_id] = dest
+
+    if accounts_dirty:
+        save_accounts(accts, profile)
 
     # ── Phase 4: import transactions, deduplicating by external_id ─────────
     # Load existing transaction files once and share ext_id sets across

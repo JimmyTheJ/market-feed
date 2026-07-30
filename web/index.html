@@ -1646,13 +1646,38 @@
                 displayCurrency = currentProfile.default_currency || 'USD';
                 localStorage.setItem('selectedProfile', JSON.stringify(currentProfile));
                 updateProfileBadge();
-                loadPositions();
-                loadSchedule();
-                refreshPipelineSettings();
+                clearProfileScopedState();
+                await reloadProfileData();
             } catch (e) {
                 localStorage.removeItem('selectedProfile');
                 showProfileSelector();
             }
+        }
+
+        function clearProfileScopedState() {
+            currentAccounts = [];
+            currentAccountId = null;
+            currentTransactions = [];
+            currentPnl = null;
+            lastAnomalyScan = null;
+            const card = document.getElementById('anomalies-card');
+            if (card) card.style.display = 'none';
+            // Don't carry an in-progress import preview across profiles
+            if (document.getElementById('import-modal')?.classList.contains('open')) {
+                closeImportModal();
+            } else {
+                _importFile = null;
+                _importPreviewData = null;
+                _importMapping = {};
+                _importCustomLabels = [];
+            }
+        }
+
+        async function reloadProfileData() {
+            loadSchedule();
+            refreshPipelineSettings();
+            await loadPositions();
+            refreshActiveTab();
         }
 
         function profileParam() {
@@ -1842,14 +1867,10 @@
             // Reset model dropdown so it reloads for the new profile
             const sel = document.getElementById('ollama-model-select');
             if (sel) { sel.dataset.loaded = ''; sel.dataset.savedModel = p.ollama_model || ''; }
-            // Reset account state for the new profile
-            currentAccounts = [];
-            currentAccountId = null;
+            clearProfileScopedState();
             hideProfileSelector();
             updateProfileBadge();
-            loadPositions();
-            loadSchedule();
-            refreshPipelineSettings();
+            await reloadProfileData();
         }
 
         async function createProfile() {
@@ -1918,6 +1939,15 @@
         }
 
         // ── Tabs ────────────────────────────────────────────────────────
+
+        function refreshActiveTab() {
+            const active = document.querySelector('.tab.active');
+            if (!active) return;
+            const tab = active.dataset.tab;
+            if (tab === 'ledger') loadAccounts();
+            else if (tab === 'outputs') loadOutputs();
+            else if (tab === 'charts') renderChart();
+        }
 
         document.querySelectorAll('.tab').forEach(tab => {
             tab.addEventListener('click', () => {
@@ -3280,6 +3310,8 @@
             document.getElementById('import-step-preview').style.display = 'none';
             document.getElementById('import-step-done').style.display = 'none';
             document.getElementById('import-modal').classList.add('open');
+            // Ensure mapping dropdowns use this profile's accounts only
+            loadAccounts();
             // Wire drag-and-drop on drop zone
             const dz = document.getElementById('import-drop-zone');
             dz.addEventListener('dragover', e => { e.preventDefault(); dz.style.borderColor = 'var(--accent)'; });
@@ -3381,12 +3413,83 @@
                 sel.innerHTML = _buildMappingSelectHtml(srcId);
                 if (current) sel.value = current;
             });
+            _recomputeImportCountsFromMapping();
+        }
+
+        /** Recount new/dup trades for the current mapping (this profile only). */
+        function _recomputeImportCountsFromMapping() {
+            const data = _importPreviewData;
+            if (!data) return;
+            const extByAcct = data.account_external_ids || {};
+            let totalNew = 0;
+            let totalDups = 0;
+            let totalSkipped = 0;
+
+            for (const ap of data.account_previews) {
+                const dest = _importMapping[ap.source_account_id] || '';
+                let existingIds = new Set();
+                if (dest.startsWith('existing:')) {
+                    existingIds = new Set(extByAcct[dest.slice(9)] || []);
+                }
+                let newCount = 0, dupCount = 0, skipCount = ap.skipped_count || 0;
+                for (const tp of (ap.transactions || [])) {
+                    const ext = tp.transaction?.external_id;
+                    if (dest.startsWith('existing:') && ext && existingIds.has(ext)) {
+                        dupCount += 1;
+                        tp.is_duplicate = true;
+                    } else {
+                        newCount += 1;
+                        tp.is_duplicate = false;
+                    }
+                }
+                ap.new_count = newCount;
+                ap.duplicate_count = dupCount;
+                ap.skipped_count = skipCount;
+                // Update matched display fields for consistency
+                if (dest.startsWith('existing:')) {
+                    const acct = (currentAccounts || []).find(a => a.id === dest.slice(9));
+                    ap.matched_account_id = dest.slice(9);
+                    ap.matched_account_name = acct ? acct.name : null;
+                    ap.to_create = false;
+                } else {
+                    ap.matched_account_id = null;
+                    ap.matched_account_name = null;
+                    ap.to_create = true;
+                }
+                totalNew += newCount;
+                totalDups += dupCount;
+                totalSkipped += skipCount;
+            }
+
+            data.total_new = totalNew;
+            data.total_duplicates = totalDups;
+            data.total_skipped = totalSkipped;
+
+            const summary = document.getElementById('import-preview-summary');
+            if (summary) {
+                // Preserve anomaly block if present — only refresh the count cards
+                const anomalyHtml = summary.querySelector('[data-import-anomalies]')?.outerHTML || '';
+                summary.innerHTML = `
+                    <div class="pnl-cards" style="margin-bottom:0">
+                        <div class="pnl-card"><div class="pnl-label">Total rows</div><div class="pnl-value pnl-neutral">${data.total_rows}</div></div>
+                        <div class="pnl-card"><div class="pnl-label">New trades</div><div class="pnl-value ${data.total_new > 0 ? 'pnl-positive' : 'pnl-neutral'}">${data.total_new}</div></div>
+                        <div class="pnl-card"><div class="pnl-label">Duplicates</div><div class="pnl-value pnl-neutral">${data.total_duplicates}</div></div>
+                        <div class="pnl-card"><div class="pnl-label">Skipped</div><div class="pnl-value pnl-neutral">${data.total_skipped}</div></div>
+                    </div>${anomalyHtml}`;
+            }
+
+            const confirmBtn = document.getElementById('import-confirm-btn');
+            if (confirmBtn) {
+                confirmBtn.disabled = data.total_new === 0;
+                confirmBtn.textContent = data.total_new > 0
+                    ? `Import ${data.total_new} transactions`
+                    : 'Nothing to import';
+            }
         }
 
         function renderImportPreview(data) {
             const summary = document.getElementById('import-preview-summary');
             const body = document.getElementById('import-preview-body');
-            const confirmBtn = document.getElementById('import-confirm-btn');
 
             // Initialise default mapping (same account_type → same new bucket by default)
             _importMapping = {};
@@ -3418,22 +3521,23 @@
                 </tr>`;
             }).join('');
 
-            // Wire change events after rendering
+            // Wire change events after rendering — recount dups for the chosen destination
             body.querySelectorAll('.mapping-select').forEach(sel => {
                 sel.addEventListener('change', () => {
                     _importMapping[sel.dataset.srcId] = sel.value;
+                    _recomputeImportCountsFromMapping();
                 });
             });
 
-            confirmBtn.disabled = data.total_new === 0;
-            confirmBtn.textContent = data.total_new > 0 ? `Import ${data.total_new} transactions` : 'Nothing to import';
+            // Align counts with the default mapping (handles destination changes)
+            _recomputeImportCountsFromMapping();
 
             // Show import anomaly warnings
             if (data.anomaly_count > 0) {
                 const errCount = (data.anomalies || []).filter(a => a.severity === 'error').length;
                 const warnCount = (data.anomalies || []).filter(a => a.severity === 'warning').length;
                 summary.innerHTML += `
-                    <div style="margin-top:12px;padding:10px 12px;border:1px solid ${errCount > 0 ? 'var(--red)' : '#d97706'};border-radius:6px;background:rgba(255,255,255,0.02)">
+                    <div data-import-anomalies style="margin-top:12px;padding:10px 12px;border:1px solid ${errCount > 0 ? 'var(--red)' : '#d97706'};border-radius:6px;background:rgba(255,255,255,0.02)">
                         <div style="font-weight:600;margin-bottom:6px;color:${errCount > 0 ? 'var(--red)' : '#d97706'}">
                             ⚠ ${data.anomaly_count} ledger anomal${data.anomaly_count === 1 ? 'y' : 'ies'} detected if imported
                         </div>
